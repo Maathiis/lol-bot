@@ -10,7 +10,9 @@ const axios = require("axios");
 const db = new Database("database.db");
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-const RIOT_API_KEY = process.env.RIOT_API_KEY ? process.env.RIOT_API_KEY.trim() : "";
+const RIOT_API_KEY = process.env.RIOT_API_KEY
+  ? process.env.RIOT_API_KEY.trim()
+  : "";
 
 const QUEUE_TYPES = {
   400: "Draft Normale",
@@ -18,8 +20,14 @@ const QUEUE_TYPES = {
   430: "Blind Pick",
   440: "Ranked Flex",
   450: "ARAM",
+  480: "Swiftplay",
+  490: "Quickplay",
   700: "Clash",
+  720: "ARAM Clash",
   1700: "Arena",
+  1710: "Arena (16p)",
+  1900: "URF",
+  2400: "ARAM Chaos",
 };
 
 // --- INITIALISATION ---
@@ -30,7 +38,9 @@ client.once("clientReady", async () => {
   db.prepare(
     "DELETE FROM players WHERE puuid NOT IN (SELECT DISTINCT puuid FROM subscriptions)",
   ).run();
-  console.log("🧹 Base de données nettoyée (joueurs sans abonnements supprimés).");
+  console.log(
+    "🧹 Base de données nettoyée (joueurs sans abonnements supprimés).",
+  );
 
   await client.application.commands.create({
     name: "add",
@@ -84,7 +94,9 @@ client.on("interactionCreate", async (interaction) => {
         { headers: { "X-Riot-Token": RIOT_API_KEY } },
       );
       const { puuid, gameName, tagLine } = accRes.data;
-      console.log(`📥 [/add] Compte trouvé : ${gameName}#${tagLine} (${puuid})`);
+      console.log(
+        `📥 [/add] Compte trouvé : ${gameName}#${tagLine} (${puuid})`,
+      );
 
       db.prepare(
         "INSERT OR IGNORE INTO players (puuid, game_name, tag_line) VALUES (?, ?, ?)",
@@ -162,19 +174,29 @@ async function syncPUUIDs() {
       const newPuuid = res.data.puuid;
 
       if (newPuuid && newPuuid !== player.puuid) {
-        db.prepare("UPDATE subscriptions SET puuid = ? WHERE puuid = ?").run(newPuuid, player.puuid);
-        db.prepare("UPDATE players SET puuid = ? WHERE puuid = ?").run(newPuuid, player.puuid);
+        db.prepare("UPDATE subscriptions SET puuid = ? WHERE puuid = ?").run(
+          newPuuid,
+          player.puuid,
+        );
+        db.prepare("UPDATE players SET puuid = ? WHERE puuid = ?").run(
+          newPuuid,
+          player.puuid,
+        );
         console.log(`✅ PUUID synchronisé : ${player.game_name}`);
       }
     } catch (e) {
-      console.error(`❌ Échec synchronisation ${player.game_name}: ${e.message}`);
+      console.error(
+        `❌ Échec synchronisation ${player.game_name}: ${e.message}`,
+      );
     }
   }
 }
 
 async function checkMatches() {
   const players = db.prepare("SELECT * FROM players").all();
-  console.log(`🚀 Lancement de la vérification pour ${players.length} joueurs...`);
+  console.log(
+    `🚀 Lancement de la vérification pour ${players.length} joueurs...`,
+  );
 
   for (const player of players) {
     try {
@@ -186,7 +208,10 @@ async function checkMatches() {
       const lastId = lolRes.data ? lolRes.data[0] : null;
 
       if (lastId && lastId !== player.last_match_id) {
-        db.prepare("UPDATE players SET last_match_id = ? WHERE puuid = ?").run(lastId, player.puuid);
+        db.prepare("UPDATE players SET last_match_id = ? WHERE puuid = ?").run(
+          lastId,
+          player.puuid,
+        );
 
         const detailUrl = `https://europe.api.riotgames.com/lol/match/v5/matches/${lastId}`;
         const detRes = await axios.get(detailUrl, axiosConfig);
@@ -199,9 +224,13 @@ async function checkMatches() {
           const sec = (info.gameDuration % 60).toString().padStart(2, "0");
           const message = `🚨 [${queueName}] - **${player.game_name}** a perdu avec **${p.championName}** (${p.kills}/${p.deaths}/${p.assists}) en **${min}:${sec}** min.`;
 
-          const subs = db.prepare("SELECT channel_id FROM subscriptions WHERE puuid = ?").all(player.puuid);
+          const subs = db
+            .prepare("SELECT channel_id FROM subscriptions WHERE puuid = ?")
+            .all(player.puuid);
           for (const sub of subs) {
-            const chan = await client.channels.fetch(sub.channel_id).catch(() => null);
+            const chan = await client.channels
+              .fetch(sub.channel_id)
+              .catch(() => null);
             if (chan) await chan.send(message);
           }
         }
