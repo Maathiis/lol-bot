@@ -1,0 +1,15 @@
+services:
+  lol-bot:
+    build: .
+    container_name: lol-bot
+    restart: unless-stopped
+    volumes:
+      # Lier le fichier .env local au conteneur (Secrets)
+      - ./.env:/usr/src/app/.env
+      # Lier le fichier de base de données pour la persistance
+      - ./database.db:/usr/src/app/database.db
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
