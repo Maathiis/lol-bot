@@ -20,8 +20,6 @@ const QUEUE_TYPES = {
   450: "ARAM",
   700: "Clash",
   1700: "Arena",
-  1090: "TFT Normale",
-  1100: "TFT Ranked",
 };
 
 // --- INITIALISATION ---
@@ -29,7 +27,6 @@ const QUEUE_TYPES = {
 client.once("clientReady", async () => {
   console.log(`✅ Bot opérationnel : ${client.user.tag}`);
 
-  // Nettoyage automatique des joueurs orphelins au démarrage
   db.prepare(
     "DELETE FROM players WHERE puuid NOT IN (SELECT DISTINCT puuid FROM subscriptions)",
   ).run();
@@ -68,7 +65,7 @@ client.once("clientReady", async () => {
     default_member_permissions: PermissionFlagsBits.Administrator.toString(),
   });
 
-  setInterval(checkMatches, 120000); // Check toutes les 2 min
+  setInterval(checkMatches, 120000);
 });
 
 // --- COMMANDES ---
@@ -83,7 +80,8 @@ client.on("interactionCreate", async (interaction) => {
 
     try {
       const accRes = await axios.get(
-        `https://europe.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${nom}/${tag}?api_key=${RIOT_API_KEY}`,
+        `https://europe.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${nom}/${tag}`,
+        { headers: { "X-Riot-Token": RIOT_API_KEY } },
       );
       const { puuid, gameName, tagLine } = accRes.data;
       console.log(`📥 [/add] Compte trouvé : ${gameName}#${tagLine} (${puuid})`);
@@ -105,8 +103,6 @@ client.on("interactionCreate", async (interaction) => {
 
   if (interaction.commandName === "remove") {
     const nom = interaction.options.getString("nom");
-
-    // Supprimer l'abonnement
     const result = db
       .prepare(
         `DELETE FROM subscriptions WHERE channel_id = ? AND puuid IN (SELECT puuid FROM players WHERE game_name LIKE ?)`,
@@ -120,7 +116,6 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    // Nettoyage des joueurs qui n'ont plus d'abonnements du tout
     db.prepare(
       "DELETE FROM players WHERE puuid NOT IN (SELECT DISTINCT puuid FROM subscriptions)",
     ).run();
@@ -142,73 +137,40 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (interaction.commandName === "refresh") {
-    console.log("📥 Commande /refresh reçue !");
     await interaction.deferReply();
-    const count = db.prepare("SELECT count(*) as count FROM players").get().count;
-    if (count === 0) {
-      return interaction.editReply("❌ Aucun joueur n'est enregistré.");
-    }
     await checkMatches();
-    await interaction.editReply("✅ Vérification immédiate des matchs terminée.");
+    await interaction.editReply("✅ Vérification terminée.");
   }
 
   if (interaction.commandName === "synchronisation") {
     await interaction.deferReply();
-    const count = db.prepare("SELECT count(*) as count FROM players").get().count;
-    if (count === 0) {
-      return interaction.editReply("❌ Aucun joueur n'est enregistré.");
-    }
     await syncPUUIDs();
     await interaction.editReply("✅ Synchronisation des PUUID terminée.");
   }
 });
 
-// --- SYNCHRONISATION PUUID (Robuste) ---
+// --- HELPERS ---
 
 async function syncPUUIDs() {
   const players = db.prepare("SELECT * FROM players").all();
   for (const player of players) {
     try {
       const res = await axios.get(
-        `https://europe.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${player.game_name}/${player.tag_line}?api_key=${RIOT_API_KEY}`,
+        `https://europe.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${player.game_name}/${player.tag_line}`,
+        { headers: { "X-Riot-Token": RIOT_API_KEY } },
       );
       const newPuuid = res.data.puuid;
 
       if (newPuuid && newPuuid !== player.puuid) {
-        // Prévention des conflits UNIQUE : si le nouveau PUUID existe déjà
-        const existing = db
-          .prepare("SELECT puuid FROM players WHERE puuid = ?")
-          .get(newPuuid);
-
-        if (existing) {
-          // Fusion des abonnements et suppression de l'ancien record
-          db.prepare("UPDATE subscriptions SET puuid = ? WHERE puuid = ?").run(
-            newPuuid,
-            player.puuid,
-          );
-          db.prepare("DELETE FROM players WHERE puuid = ?").run(player.puuid);
-        } else {
-          // Mise à jour classique
-          db.prepare("UPDATE subscriptions SET puuid = ? WHERE puuid = ?").run(
-            newPuuid,
-            player.puuid,
-          );
-          db.prepare("UPDATE players SET puuid = ? WHERE puuid = ?").run(
-            newPuuid,
-            player.puuid,
-          );
-        }
+        db.prepare("UPDATE subscriptions SET puuid = ? WHERE puuid = ?").run(newPuuid, player.puuid);
+        db.prepare("UPDATE players SET puuid = ? WHERE puuid = ?").run(newPuuid, player.puuid);
         console.log(`✅ PUUID synchronisé : ${player.game_name}`);
       }
     } catch (e) {
-      console.error(
-        `❌ Échec synchronisation ${player.game_name}: ${e.message}`,
-      );
+      console.error(`❌ Échec synchronisation ${player.game_name}: ${e.message}`);
     }
   }
 }
-
-// --- BOUCLE ---
 
 async function checkMatches() {
   const players = db.prepare("SELECT * FROM players").all();
@@ -216,112 +178,38 @@ async function checkMatches() {
 
   for (const player of players) {
     try {
-      console.log(`⏳ Vérification en cours pour ${player.game_name}...`);
-      // On check LoL ET TFT
-      const lolMatchUrl = `https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/${player.puuid}/ids?count=1&api_key=${RIOT_API_KEY}`;
-      const tftMatchUrl = `https://europe.api.riotgames.com/tft/match/v1/matches/by-puuid/${player.puuid}/ids?count=1&api_key=${RIOT_API_KEY}`;
+      console.log(`⏳ Vérification : ${player.game_name}`);
+      const axiosConfig = { headers: { "X-Riot-Token": RIOT_API_KEY } };
+      const lolMatchUrl = `https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/${player.puuid}/ids?count=1`;
 
-      const [lolRes, tftRes] = await Promise.all([
-        axios.get(lolMatchUrl),
-        axios.get(tftMatchUrl),
-      ]);
-      const lastId = lolRes.data[0] || tftRes.data[0];
+      const lolRes = await axios.get(lolMatchUrl, axiosConfig);
+      const lastId = lolRes.data ? lolRes.data[0] : null;
 
       if (lastId && lastId !== player.last_match_id) {
-        // Enregistrement immédiat pour éviter les doublons si checkMatches est rappelé
-        db.prepare("UPDATE players SET last_match_id = ? WHERE puuid = ?").run(
-          lastId,
-          player.puuid,
-        );
+        db.prepare("UPDATE players SET last_match_id = ? WHERE puuid = ?").run(lastId, player.puuid);
 
-        console.log(
-          `🔍 [${player.game_name}] Nouveau match détecté: ${lastId}`,
-        );
-        const isTft = lastId.includes("TFT");
-        const detailUrl = isTft
-          ? `https://europe.api.riotgames.com/tft/match/v1/matches/${lastId}?api_key=${RIOT_API_KEY}`
-          : `https://europe.api.riotgames.com/lol/match/v5/matches/${lastId}?api_key=${RIOT_API_KEY}`;
-
-        const detRes = await axios.get(detailUrl);
+        const detailUrl = `https://europe.api.riotgames.com/lol/match/v5/matches/${lastId}`;
+        const detRes = await axios.get(detailUrl, axiosConfig);
         const info = detRes.data.info;
         const p = info.participants.find((part) => part.puuid === player.puuid);
 
-        if (p) {
-          console.log(`📊 [${player.game_name}] Données du match récupérées.`);
-          let shouldNotify = false;
-          let message = "";
+        if (p && !p.win && info.gameDuration > 300) {
           const queueName = QUEUE_TYPES[info.queueId] || "Partie";
+          const min = Math.floor(info.gameDuration / 60);
+          const sec = (info.gameDuration % 60).toString().padStart(2, "0");
+          const message = `🚨 [${queueName}] - **${player.game_name}** a perdu avec **${p.championName}** (${p.kills}/${p.deaths}/${p.assists}) en **${min}:${sec}** min.`;
 
-          if (isTft) {
-            // TFT : Défaite si Top 5 ou +
-            if (p.placement > 4) {
-              shouldNotify = true;
-              message = `🏟️ [${queueName}] - **${player.game_name}** a fait un **Top ${p.placement}**... Loser.`;
-            } else {
-              console.log(
-                `⏩ [${player.game_name}] TFT Top ${p.placement}: Pas de notification.`,
-              );
-            }
-          } else {
-            // LoL : Défaite classique
-            if (!p.win && info.gameDuration > 300) {
-              shouldNotify = true;
-              const min = Math.floor(info.gameDuration / 60);
-              const sec = (info.gameDuration % 60).toString().padStart(2, "0");
-              message = `🚨 [${queueName}] - **${player.game_name}** a perdu avec **${p.championName}** (${p.kills}/${p.deaths}/${p.assists}) en **${min}:${sec}** min.`;
-            } else {
-              console.log(
-                `⏩ [${player.game_name}] LoL ${p.win ? "Victoire" : "Défaite"} (Durée: ${info.gameDuration}s): Pas de notification.`,
-              );
-            }
-          }
-
-          if (shouldNotify) {
-            const subs = db
-              .prepare("SELECT channel_id FROM subscriptions WHERE puuid = ?")
-              .all(player.puuid);
-
-            if (subs.length === 0) {
-              console.log(
-                `⚠️ [${player.game_name}] Aucune souscription trouvée pour ce joueur.`,
-              );
-            }
-
-            for (const sub of subs) {
-              const chan = await client.channels
-                .fetch(sub.channel_id)
-                .catch((err) => {
-                  console.error(
-                    `❌ [${player.game_name}] Impossible de fetch le salon ${sub.channel_id}: ${err.message}`,
-                  );
-                  return null;
-                });
-              if (chan) {
-                console.log(
-                  `✉️ [${player.game_name}] Envoi du message dans le salon ${chan.name}...`,
-                );
-                await chan.send(message);
-              }
-            }
+          const subs = db.prepare("SELECT channel_id FROM subscriptions WHERE puuid = ?").all(player.puuid);
+          for (const sub of subs) {
+            const chan = await client.channels.fetch(sub.channel_id).catch(() => null);
+            if (chan) await chan.send(message);
           }
         }
       } else {
         console.log(`✅ [${player.game_name}] Aucun nouveau match.`);
       }
     } catch (e) {
-      if (e.response && e.response.status === 403) {
-        console.error(
-          `Erreur ${player.game_name}: 403 Forbidden. Votre clé API Riot a probablement expiré (renouvelez-la sur https://developer.riotgames.com/).`,
-        );
-      } else if (e.response && e.response.status === 429) {
-        console.error(`Erreur ${player.game_name}: 429 Rate Limit exceeded.`);
-      } else if (e.response && e.response.status === 400) {
-        console.error(
-          `Erreur ${player.game_name}: 400 Bad Request. Tapez /refresh pour synchroniser vos joueurs avec la nouvelle clé API.`,
-        );
-      } else {
-        console.error(`Erreur ${player.game_name}: ${e.message}`);
-      }
+      console.error(`❌ Erreur ${player.game_name}: ${e.message}`);
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
