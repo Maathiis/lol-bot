@@ -1,0 +1,15 @@
+# Dépendances
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environnement (CRITIQUE : contient vos clés API)
+.env
+
+# Base de données locale
+database.db
+
+# Système
+.DS_Store
+Thumbs.db
