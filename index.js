@@ -75,6 +75,12 @@ client.once("clientReady", async () => {
     default_member_permissions: PermissionFlagsBits.Administrator.toString(),
   });
 
+  await client.application.commands.create({
+    name: "clear",
+    description: "Supprimer tous les joueurs suivis dans ce salon (Admin)",
+    default_member_permissions: PermissionFlagsBits.Administrator.toString(),
+  });
+
   setInterval(checkMatches, 120000);
 });
 
@@ -159,6 +165,22 @@ client.on("interactionCreate", async (interaction) => {
     await syncPUUIDs();
     await interaction.editReply("✅ Synchronisation des PUUID terminée.");
   }
+
+  if (interaction.commandName === "clear") {
+    const result = db
+      .prepare("DELETE FROM subscriptions WHERE channel_id = ?")
+      .run(interaction.channelId);
+
+    db.prepare(
+      "DELETE FROM players WHERE puuid NOT IN (SELECT DISTINCT puuid FROM subscriptions)",
+    ).run();
+
+    await interaction.reply(
+      result.changes > 0
+        ? `🗑️ **${result.changes}** joueur(s) retiré(s) de la surveillance dans ce salon.`
+        : "❌ Aucun joueur n'est suivi dans ce salon.",
+    );
+  }
 });
 
 // --- HELPERS ---
@@ -192,6 +214,83 @@ async function syncPUUIDs() {
   }
 }
 
+/**
+ * Récupère le rank et les LP d'un joueur via l'API Riot.
+ * @param {string} puuid - Le PUUID du joueur
+ * @param {number} queueId - L'ID de la queue (420 = Solo, 440 = Flex)
+ * @returns {Promise<{tier: string, rank: string, lp: number} | null>}
+ */
+async function fetchPlayerRank(puuid, queueId) {
+  try {
+    const axiosConfig = { headers: { "X-Riot-Token": RIOT_API_KEY } };
+
+    // On vérifie si on a déjà stocké le summonerId
+    let summonerId = null;
+    const cacheRow = db.prepare("SELECT summoner_id FROM players WHERE puuid = ?").get(puuid);
+    
+    if (cacheRow && cacheRow.summoner_id) {
+      summonerId = cacheRow.summoner_id;
+    } else {
+      // Étape 1 : PUUID → summonerId (On le récupère chez Riot si on ne l'a pas)
+      const summonerRes = await axios.get(
+        `https://euw1.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${puuid}`,
+        axiosConfig,
+      );
+      summonerId = summonerRes.data.id;
+      
+      // On sauvegarde pour les prochaines requêtes (économie d'appel API)
+      db.prepare("UPDATE players SET summoner_id = ? WHERE puuid = ?").run(summonerId, puuid);
+      console.log(`💾 Summoner ID mis en cache pour ${puuid}`);
+    }
+
+    // Étape 2 : summonerId → entrées ranked
+    const leagueRes = await axios.get(
+      `https://euw1.api.riotgames.com/lol/league/v4/entries/by-summoner/${summonerId}`,
+      axiosConfig,
+    );
+
+    // Cherche la queue correspondante (Solo ou Flex)
+    const queueType =
+      queueId === 440 ? "RANKED_FLEX_SR" : "RANKED_SOLO_5x5";
+    const entry = leagueRes.data.find((e) => e.queueType === queueType);
+
+    if (!entry) return null;
+
+    return {
+      tier: entry.tier,
+      rank: entry.rank,
+      lp: entry.leaguePoints,
+    };
+  } catch (e) {
+    console.error(`⚠️ Impossible de récupérer le rank : ${e.message}`);
+    return null;
+  }
+}
+
+/**
+ * Met à jour la série de défaites consécutives d'un joueur.
+ * @param {string} puuid - Le PUUID du joueur
+ * @param {boolean} isWin - true si le joueur a gagné
+ * @returns {number} La valeur actuelle de la streak
+ */
+function updateLossStreak(puuid, isWin) {
+  if (isWin) {
+    db.prepare("UPDATE players SET loss_streak = 0 WHERE puuid = ?").run(
+      puuid,
+    );
+    return 0;
+  }
+
+  db.prepare(
+    "UPDATE players SET loss_streak = loss_streak + 1 WHERE puuid = ?",
+  ).run(puuid);
+
+  const row = db
+    .prepare("SELECT loss_streak FROM players WHERE puuid = ?")
+    .get(puuid);
+  return row ? row.loss_streak : 1;
+}
+
 async function checkMatches() {
   const players = db.prepare("SELECT * FROM players").all();
   console.log(
@@ -218,11 +317,30 @@ async function checkMatches() {
         const info = detRes.data.info;
         const p = info.participants.find((part) => part.puuid === player.puuid);
 
-        if (p && !p.win && info.gameDuration > 300) {
+        if (!p || info.gameDuration <= 300) continue;
+
+        // Mise à jour de la streak (pour toutes les games)
+        const streak = updateLossStreak(player.puuid, p.win);
+
+        // On n'envoie un message que pour les défaites
+        if (!p.win) {
           const queueName = QUEUE_TYPES[info.queueId] || "Partie";
           const min = Math.floor(info.gameDuration / 60);
           const sec = (info.gameDuration % 60).toString().padStart(2, "0");
-          const message = `🚨 [${queueName}] - **${player.game_name}** a perdu avec **${p.championName}** (${p.kills}/${p.deaths}/${p.assists}) en **${min}:${sec}** min.`;
+
+          // Récupération du rank/LP
+          const rankData = await fetchPlayerRank(player.puuid, info.queueId);
+
+          // Construction du message
+          let message = `🚨 [${queueName}] - **${player.game_name}** a perdu avec **${p.championName}** (${p.kills}/${p.deaths}/${p.assists}) en **${min}:${sec}** min.`;
+
+          if (rankData) {
+            message += `\n📊 ${rankData.tier} ${rankData.rank} — ${rankData.lp} LP`;
+          }
+
+          if (streak > 1) {
+            message += `\n🔥 Série de défaites : ${streak}`;
+          }
 
           const subs = db
             .prepare("SELECT channel_id FROM subscriptions WHERE puuid = ?")

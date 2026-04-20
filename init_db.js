@@ -19,4 +19,15 @@ db.exec(`
   );
 `);
 
-console.log("✅ Base de données initialisée avec la colonne LP !");
+// Migrations : ajouts de colonnes si elles n'existent pas encore
+try {
+  db.exec("ALTER TABLE players ADD COLUMN loss_streak INTEGER DEFAULT 0");
+  console.log("✅ Colonne loss_streak ajoutée.");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE players ADD COLUMN summoner_id TEXT");
+  console.log("✅ Colonne summoner_id ajoutée.");
+} catch (e) {}
+
+console.log("✅ Base de données initialisée !");
