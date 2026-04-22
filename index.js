@@ -8,7 +8,7 @@ const Database = require("better-sqlite3");
 const axios = require("axios");
 const { evaluateTriggeredBadges } = require("./badges");
 
-const db = new Database("database.db");
+const db = new Database("data/database.db");
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
