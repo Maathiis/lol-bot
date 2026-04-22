@@ -9,7 +9,9 @@ const axios = require("axios");
 const { evaluateTriggeredBadges } = require("./badges");
 
 const db = new Database("database.db");
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+});
 
 const RIOT_API_KEY = process.env.RIOT_API_KEY
   ? process.env.RIOT_API_KEY.trim()
@@ -64,7 +66,15 @@ client.once("clientReady", async () => {
     name: "remove",
     description: "Retirer un joueur (Admin)",
     default_member_permissions: PermissionFlagsBits.Administrator.toString(),
-    options: [{ name: "nom", type: 3, description: "Pseudo", required: true }],
+    options: [
+      {
+        name: "nom",
+        type: 3,
+        description: "Pseudo#Tag (utiliser l'autocomplétion)",
+        required: true,
+        autocomplete: true,
+      },
+    ],
   });
 
   await client.application.commands.create({
@@ -94,9 +104,41 @@ client.once("clientReady", async () => {
     description: "Lier un joueur LoL à un compte Discord (Admin)",
     default_member_permissions: PermissionFlagsBits.Administrator.toString(),
     options: [
-      { name: "nom", type: 3, description: "Pseudo", required: true },
-      { name: "tag", type: 3, description: "Tag", required: true },
-      { name: "discord", type: 6, description: "Utilisateur Discord", required: true },
+      {
+        name: "joueur",
+        type: 3,
+        description: "Joueur à lier (utiliser l'autocomplétion)",
+        required: true,
+        autocomplete: true,
+      },
+      {
+        name: "discord",
+        type: 6,
+        description: "Utilisateur Discord",
+        required: true,
+      },
+    ],
+  });
+
+  await client.application.commands.create({
+    name: "badge-remove",
+    description: "Retirer un badge à un joueur (Admin)",
+    default_member_permissions: PermissionFlagsBits.Administrator.toString(),
+    options: [
+      {
+        name: "joueur",
+        type: 3,
+        description: "Le joueur (utiliser l'autocomplétion)",
+        required: true,
+        autocomplete: true,
+      },
+      {
+        name: "badge",
+        type: 3,
+        description: "Clé du badge (ex: TEST_LOSS)",
+        required: true,
+        autocomplete: true,
+      },
     ],
   });
 
@@ -106,6 +148,40 @@ client.once("clientReady", async () => {
 // --- COMMANDES ---
 
 client.on("interactionCreate", async (interaction) => {
+  if (interaction.isAutocomplete()) {
+    const focusedOption = interaction.options.getFocused(true);
+
+    if (focusedOption.name === "nom" || focusedOption.name === "joueur") {
+      const players = db
+        .prepare(
+          "SELECT game_name, tag_line, puuid FROM players WHERE game_name LIKE ? OR (game_name || '#' || tag_line) LIKE ?",
+        )
+        .all(`${focusedOption.value}%`, `%${focusedOption.value}%`)
+        .slice(0, 25);
+
+      await interaction.respond(
+        players.map((p) => ({
+          name: `${p.game_name}#${p.tag_line}`,
+          value: p.puuid,
+        })),
+      );
+    }
+
+    if (focusedOption.name === "badge") {
+      const { BADGES } = require("./badges");
+      const filtered = BADGES.filter(
+        (b) =>
+          b.key.toLowerCase().includes(focusedOption.value.toLowerCase()) ||
+          b.name.toLowerCase().includes(focusedOption.value.toLowerCase()),
+      ).slice(0, 25);
+
+      await interaction.respond(
+        filtered.map((b) => ({ name: `${b.name} (${b.key})`, value: b.key })),
+      );
+    }
+    return;
+  }
+
   if (!interaction.isCommand()) return;
 
   if (interaction.commandName === "add") {
@@ -148,16 +224,31 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (interaction.commandName === "remove") {
-    const nom = interaction.options.getString("nom");
+    const identifiant = interaction.options.getString("nom");
+
+    // On cherche le joueur par PUUID (valeur de l'autocomplete) ou par nom
+    const player = db
+      .prepare(
+        "SELECT puuid, game_name, tag_line FROM players WHERE puuid = ? OR game_name = ?",
+      )
+      .get(identifiant, identifiant);
+
+    if (!player) {
+      return interaction.reply({
+        content: `❌ Le joueur **${identifiant}** n'est pas dans la base de données.`,
+        ephemeral: true,
+      });
+    }
+
     const result = db
       .prepare(
-        `DELETE FROM subscriptions WHERE channel_id = ? AND puuid IN (SELECT puuid FROM players WHERE game_name LIKE ?)`,
+        "DELETE FROM subscriptions WHERE channel_id = ? AND puuid = ?",
       )
-      .run(interaction.channelId, nom);
+      .run(interaction.channelId, player.puuid);
 
     if (result.changes === 0) {
       return interaction.reply({
-        content: `❌ Le joueur **${nom}** n'est pas suivi dans ce canal.`,
+        content: `❌ Le joueur **${player.game_name}#${player.tag_line}** n'est pas suivi dans ce canal.`,
         ephemeral: true,
       });
     }
@@ -166,7 +257,9 @@ client.on("interactionCreate", async (interaction) => {
       "DELETE FROM players WHERE puuid NOT IN (SELECT DISTINCT puuid FROM subscriptions)",
     ).run();
 
-    await interaction.reply(`🗑️ **${nom}** a été retiré de la surveillance.`);
+    await interaction.reply(
+      `🗑️ **${player.game_name}#${player.tag_line}** a été retiré de la surveillance.`,
+    );
   }
 
   if (interaction.commandName === "list") {
@@ -216,17 +309,18 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (interaction.commandName === "link") {
-    const nom = interaction.options.getString("nom");
-    const tag = interaction.options.getString("tag");
+    const identifiant = interaction.options.getString("joueur");
     const discordUser = interaction.options.getUser("discord");
 
     const player = db
-      .prepare("SELECT puuid, game_name, tag_line FROM players WHERE game_name = ? AND tag_line = ?")
-      .get(nom, tag);
+      .prepare(
+        "SELECT puuid, game_name, tag_line FROM players WHERE puuid = ? OR game_name = ?",
+      )
+      .get(identifiant, identifiant);
 
     if (!player) {
       return interaction.reply({
-        content: `❌ Joueur introuvable dans le suivi: **${nom}#${tag}**`,
+        content: `❌ Joueur introuvable dans le suivi: **${identifiant}**`,
         ephemeral: true,
       });
     }
@@ -238,6 +332,37 @@ client.on("interactionCreate", async (interaction) => {
 
     await interaction.reply(
       `🔗 **${player.game_name}#${player.tag_line}** est maintenant lié à ${discordUser}.`,
+    );
+  }
+
+  if (interaction.commandName === "badge-remove") {
+    const puuid = interaction.options.getString("joueur");
+    const badgeKey = interaction.options.getString("badge");
+
+    const player = db
+      .prepare("SELECT game_name, tag_line FROM players WHERE puuid = ?")
+      .get(puuid);
+
+    if (!player) {
+      return interaction.reply({
+        content: "❌ Joueur introuvable. Utilisez l'autocomplétion.",
+        ephemeral: true,
+      });
+    }
+
+    const result = db
+      .prepare("DELETE FROM player_badges WHERE puuid = ? AND badge_key = ?")
+      .run(puuid, badgeKey);
+
+    if (result.changes === 0) {
+      return interaction.reply({
+        content: `❌ Le joueur **${player.game_name}** ne possède pas le badge **${badgeKey}**.`,
+        ephemeral: true,
+      });
+    }
+
+    await interaction.reply(
+      `✅ Badge **${badgeKey}** retiré pour **${player.game_name}#${player.tag_line}**.`,
     );
   }
 });

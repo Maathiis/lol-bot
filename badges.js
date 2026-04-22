@@ -23,6 +23,20 @@ const BADGES = [
       participant.deaths >= 10 &&
       participant.assists === 0,
   },
+  {
+    key: "TEST_LOSS",
+    name: "Mauvais perdant",
+    description: "A perdu une partie (badge de test)",
+    repeatable: true,
+    trigger: ({ participant }) => !participant.win,
+  },
+  {
+    key: "NEGATIVE_KDA",
+    name: "Boulet",
+    description: "A finit en négatif (plus de morts que de kills)",
+    repeatable: true,
+    trigger: ({ participant }) => participant.kills < participant.deaths,
+  },
 ];
 
 function evaluateTriggeredBadges(participant, streak) {
