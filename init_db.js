@@ -30,4 +30,20 @@ try {
   console.log("✅ Colonne summoner_id ajoutée.");
 } catch (e) {}
 
+try {
+  db.exec("ALTER TABLE players ADD COLUMN discord_user_id TEXT");
+  console.log("✅ Colonne discord_user_id ajoutée.");
+} catch (e) {}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS player_badges (
+    puuid TEXT NOT NULL,
+    badge_key TEXT NOT NULL,
+    first_unlocked_at TEXT NOT NULL,
+    last_unlocked_at TEXT NOT NULL,
+    unlock_count INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (puuid, badge_key)
+  );
+`);
+
 console.log("✅ Base de données initialisée !");

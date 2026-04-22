@@ -6,6 +6,7 @@ const {
 } = require("discord.js");
 const Database = require("better-sqlite3");
 const axios = require("axios");
+const { evaluateTriggeredBadges } = require("./badges");
 
 const db = new Database("database.db");
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -34,6 +35,7 @@ const QUEUE_TYPES = {
 
 client.once("clientReady", async () => {
   console.log(`✅ Bot opérationnel : ${client.user.tag}`);
+  ensureSchema();
 
   db.prepare(
     "DELETE FROM players WHERE puuid NOT IN (SELECT DISTINCT puuid FROM subscriptions)",
@@ -49,6 +51,12 @@ client.once("clientReady", async () => {
     options: [
       { name: "nom", type: 3, description: "Pseudo", required: true },
       { name: "tag", type: 3, description: "Tag", required: true },
+      {
+        name: "discord",
+        type: 6,
+        description: "Compte Discord à lier (optionnel)",
+        required: false,
+      },
     ],
   });
 
@@ -81,6 +89,17 @@ client.once("clientReady", async () => {
     default_member_permissions: PermissionFlagsBits.Administrator.toString(),
   });
 
+  await client.application.commands.create({
+    name: "link",
+    description: "Lier un joueur LoL à un compte Discord (Admin)",
+    default_member_permissions: PermissionFlagsBits.Administrator.toString(),
+    options: [
+      { name: "nom", type: 3, description: "Pseudo", required: true },
+      { name: "tag", type: 3, description: "Tag", required: true },
+      { name: "discord", type: 6, description: "Utilisateur Discord", required: true },
+    ],
+  });
+
   setInterval(checkMatches, 120000);
 });
 
@@ -93,6 +112,7 @@ client.on("interactionCreate", async (interaction) => {
     await interaction.deferReply();
     const nom = interaction.options.getString("nom");
     const tag = interaction.options.getString("tag");
+    const discordUser = interaction.options.getUser("discord");
 
     try {
       const accRes = await axios.get(
@@ -105,14 +125,22 @@ client.on("interactionCreate", async (interaction) => {
       );
 
       db.prepare(
-        "INSERT OR IGNORE INTO players (puuid, game_name, tag_line) VALUES (?, ?, ?)",
-      ).run(puuid, gameName, tagLine);
+        "INSERT OR IGNORE INTO players (puuid, game_name, tag_line, discord_user_id) VALUES (?, ?, ?, ?)",
+      ).run(puuid, gameName, tagLine, discordUser ? discordUser.id : null);
+      if (discordUser) {
+        db.prepare("UPDATE players SET discord_user_id = ? WHERE puuid = ?").run(
+          discordUser.id,
+          puuid,
+        );
+      }
       db.prepare(
         "INSERT OR IGNORE INTO subscriptions (puuid, channel_id) VALUES (?, ?)",
       ).run(puuid, interaction.channelId);
 
       await interaction.editReply(
-        `✅ **${gameName}#${tagLine}** est maintenant sous surveillance ici.`,
+        discordUser
+          ? `✅ **${gameName}#${tagLine}** est sous surveillance ici, lié à ${discordUser}.`
+          : `✅ **${gameName}#${tagLine}** est maintenant sous surveillance ici.`,
       );
     } catch (e) {
       await interaction.editReply("❌ Introuvable.");
@@ -144,12 +172,17 @@ client.on("interactionCreate", async (interaction) => {
   if (interaction.commandName === "list") {
     const rows = db
       .prepare(
-        "SELECT p.game_name, p.tag_line FROM players p JOIN subscriptions s ON p.puuid = s.puuid WHERE s.channel_id = ?",
+        "SELECT p.game_name, p.tag_line, p.discord_user_id FROM players p JOIN subscriptions s ON p.puuid = s.puuid WHERE s.channel_id = ?",
       )
       .all(interaction.channelId);
     await interaction.reply(
       rows.length
-        ? `**Joueurs suivis :**\n${rows.map((r) => `• ${r.game_name}#${r.tag_line}`).join("\n")}`
+        ? `**Joueurs suivis :**\n${rows
+            .map(
+              (r) =>
+                `• ${r.game_name}#${r.tag_line}${r.discord_user_id ? ` -> <@${r.discord_user_id}>` : ""}`,
+            )
+            .join("\n")}`
         : "Aucun joueur.",
     );
   }
@@ -179,6 +212,32 @@ client.on("interactionCreate", async (interaction) => {
       result.changes > 0
         ? `🗑️ **${result.changes}** joueur(s) retiré(s) de la surveillance dans ce salon.`
         : "❌ Aucun joueur n'est suivi dans ce salon.",
+    );
+  }
+
+  if (interaction.commandName === "link") {
+    const nom = interaction.options.getString("nom");
+    const tag = interaction.options.getString("tag");
+    const discordUser = interaction.options.getUser("discord");
+
+    const player = db
+      .prepare("SELECT puuid, game_name, tag_line FROM players WHERE game_name = ? AND tag_line = ?")
+      .get(nom, tag);
+
+    if (!player) {
+      return interaction.reply({
+        content: `❌ Joueur introuvable dans le suivi: **${nom}#${tag}**`,
+        ephemeral: true,
+      });
+    }
+
+    db.prepare("UPDATE players SET discord_user_id = ? WHERE puuid = ?").run(
+      discordUser.id,
+      player.puuid,
+    );
+
+    await interaction.reply(
+      `🔗 **${player.game_name}#${player.tag_line}** est maintenant lié à ${discordUser}.`,
     );
   }
 });
@@ -223,31 +282,56 @@ async function syncPUUIDs() {
 async function fetchPlayerRank(puuid, queueId) {
   try {
     const axiosConfig = { headers: { "X-Riot-Token": RIOT_API_KEY } };
+    const platformRoute = await resolvePlatformRoute(puuid, axiosConfig);
 
     // On vérifie si on a déjà stocké le summonerId
     let summonerId = null;
-    const cacheRow = db.prepare("SELECT summoner_id FROM players WHERE puuid = ?").get(puuid);
-    
+    const cacheRow = db
+      .prepare("SELECT summoner_id FROM players WHERE puuid = ?")
+      .get(puuid);
+
     if (cacheRow && cacheRow.summoner_id) {
       summonerId = cacheRow.summoner_id;
     } else {
       // Étape 1 : PUUID → summonerId (On le récupère chez Riot si on ne l'a pas)
       const summonerRes = await axios.get(
-        `https://euw1.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${puuid}`,
+        `https://${platformRoute}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${puuid}`,
         axiosConfig,
       );
       summonerId = summonerRes.data.id;
-      
+
       // On sauvegarde pour les prochaines requêtes (économie d'appel API)
       db.prepare("UPDATE players SET summoner_id = ? WHERE puuid = ?").run(summonerId, puuid);
       console.log(`💾 Summoner ID mis en cache pour ${puuid}`);
     }
 
     // Étape 2 : summonerId → entrées ranked
-    const leagueRes = await axios.get(
-      `https://euw1.api.riotgames.com/lol/league/v4/entries/by-summoner/${summonerId}`,
-      axiosConfig,
-    );
+    let leagueRes;
+    try {
+      leagueRes = await axios.get(
+        `https://${platformRoute}.api.riotgames.com/lol/league/v4/entries/by-summoner/${summonerId}`,
+        axiosConfig,
+      );
+    } catch (leagueError) {
+      // En cas de clé/dev app changée, les IDs chiffrés peuvent devenir invalides : on régénère puis on retente.
+      if (leagueError.response?.status === 403) {
+        const summonerRes = await axios.get(
+          `https://${platformRoute}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${puuid}`,
+          axiosConfig,
+        );
+        const freshSummonerId = summonerRes.data.id;
+        db.prepare("UPDATE players SET summoner_id = ? WHERE puuid = ?").run(
+          freshSummonerId,
+          puuid,
+        );
+        leagueRes = await axios.get(
+          `https://${platformRoute}.api.riotgames.com/lol/league/v4/entries/by-summoner/${freshSummonerId}`,
+          axiosConfig,
+        );
+      } else {
+        throw leagueError;
+      }
+    }
 
     // Cherche la queue correspondante (Solo ou Flex)
     const queueType =
@@ -265,6 +349,14 @@ async function fetchPlayerRank(puuid, queueId) {
     console.error(`⚠️ Impossible de récupérer le rank : ${e.message}`);
     return null;
   }
+}
+
+async function resolvePlatformRoute(puuid, axiosConfig) {
+  const shardRes = await axios.get(
+    `https://europe.api.riotgames.com/riot/account/v1/active-shards/by-game/lol/by-puuid/${puuid}`,
+    axiosConfig,
+  );
+  return shardRes.data.activeShard.toLowerCase();
 }
 
 /**
@@ -289,6 +381,59 @@ function updateLossStreak(puuid, isWin) {
     .prepare("SELECT loss_streak FROM players WHERE puuid = ?")
     .get(puuid);
   return row ? row.loss_streak : 1;
+}
+
+function ensureSchema() {
+  try {
+    db.exec("ALTER TABLE players ADD COLUMN discord_user_id TEXT");
+    console.log("✅ Colonne discord_user_id ajoutée.");
+  } catch (e) {}
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS player_badges (
+      puuid TEXT NOT NULL,
+      badge_key TEXT NOT NULL,
+      first_unlocked_at TEXT NOT NULL,
+      last_unlocked_at TEXT NOT NULL,
+      unlock_count INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (puuid, badge_key)
+    );
+  `);
+}
+
+function registerBadgeUnlock(puuid, badge) {
+  const nowIso = new Date().toISOString();
+  const exists = db
+    .prepare("SELECT unlock_count FROM player_badges WHERE puuid = ? AND badge_key = ?")
+    .get(puuid, badge.key);
+
+  if (exists && !badge.repeatable) {
+    return { isNew: false, unlockCount: exists.unlock_count };
+  }
+
+  if (!exists) {
+    db.prepare(
+      "INSERT INTO player_badges (puuid, badge_key, first_unlocked_at, last_unlocked_at, unlock_count) VALUES (?, ?, ?, ?, 1)",
+    ).run(puuid, badge.key, nowIso, nowIso);
+    return { isNew: true, unlockCount: 1 };
+  }
+
+  db.prepare(
+    "UPDATE player_badges SET unlock_count = unlock_count + 1, last_unlocked_at = ? WHERE puuid = ? AND badge_key = ?",
+  ).run(nowIso, puuid, badge.key);
+  return { isNew: true, unlockCount: exists.unlock_count + 1 };
+}
+
+function formatBadgeAnnouncement(player, unlockedBadges) {
+  if (!unlockedBadges.length) return "";
+
+  const discordLabel = player.discord_user_id
+    ? `<@${player.discord_user_id}>`
+    : `**${player.game_name}** (compte Discord non lié)`;
+  const badgesText = unlockedBadges
+    .map((badge) => `le badge **${badge.name}** : ${badge.description}`)
+    .join(", et ");
+  return `🎖️ Grâce à sa performance, ${discordLabel} gagne ${badgesText}.`;
 }
 
 async function checkMatches() {
@@ -345,6 +490,19 @@ async function checkMatches() {
           const subs = db
             .prepare("SELECT channel_id FROM subscriptions WHERE puuid = ?")
             .all(player.puuid);
+
+          const triggeredBadges = evaluateTriggeredBadges(p, streak);
+          const unlockedBadges = [];
+          for (const badge of triggeredBadges) {
+            const unlock = registerBadgeUnlock(player.puuid, badge);
+            if (unlock.isNew) {
+              unlockedBadges.push(badge);
+            }
+          }
+          if (unlockedBadges.length > 0) {
+            message += `\n${formatBadgeAnnouncement(player, unlockedBadges)}`;
+          }
+
           for (const sub of subs) {
             const chan = await client.channels
               .fetch(sub.channel_id)
