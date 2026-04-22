@@ -1,6 +1,11 @@
 const fs = require("fs");
 const Database = require("better-sqlite3");
 
+// Charger l'environnement
+const envPath = process.env.NODE_ENV === "test" ? ".env.test" : ".env";
+require("dotenv").config({ path: envPath });
+console.log(`🌍 Mode : ${process.env.NODE_ENV || "production"} (Chargement de ${envPath})`);
+
 // Assurer l'existence du dossier data
 if (!fs.existsSync("data")) {
   fs.mkdirSync("data", { recursive: true });

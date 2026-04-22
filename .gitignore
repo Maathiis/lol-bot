@@ -6,6 +6,7 @@ yarn-error.log*
 
 # Environnement (CRITIQUE : contient vos clés API)
 .env
+.env.test
 
 # Base de données locale
 database.db

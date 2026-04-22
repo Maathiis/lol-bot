@@ -1,4 +1,8 @@
-require("dotenv").config();
+const envPath = process.env.NODE_ENV === "test" ? ".env.test" : ".env";
+require("dotenv").config({ path: envPath });
+console.log(
+  `🌍 Mode : ${process.env.NODE_ENV || "production"} (Chargement de ${envPath})`,
+);
 const {
   Client,
   GatewayIntentBits,
@@ -142,6 +146,39 @@ client.once("clientReady", async () => {
     ],
   });
 
+  await client.application.commands.create({
+    name: "badge-add",
+    description: "Donner un badge manuellement à un joueur (Admin)",
+    default_member_permissions: PermissionFlagsBits.Administrator.toString(),
+    options: [
+      {
+        name: "joueur",
+        type: 3,
+        description: "Le joueur (utiliser l'autocomplétion)",
+        required: true,
+        autocomplete: true,
+      },
+      {
+        name: "badge",
+        type: 3,
+        description: "Clé du badge (ex: TEST_LOSS)",
+        required: true,
+        autocomplete: true,
+      },
+    ],
+  });
+
+  await client.application.commands.create({
+    name: "badges",
+    description: "Voir tous les badges obtenus par les joueurs",
+  });
+
+  await client.application.commands.create({
+    name: "badges-list",
+    description:
+      "Voir la liste de tous les badges disponibles et leurs descriptions",
+  });
+
   setInterval(checkMatches, 120000);
 });
 
@@ -204,10 +241,9 @@ client.on("interactionCreate", async (interaction) => {
         "INSERT OR IGNORE INTO players (puuid, game_name, tag_line, discord_user_id) VALUES (?, ?, ?, ?)",
       ).run(puuid, gameName, tagLine, discordUser ? discordUser.id : null);
       if (discordUser) {
-        db.prepare("UPDATE players SET discord_user_id = ? WHERE puuid = ?").run(
-          discordUser.id,
-          puuid,
-        );
+        db.prepare(
+          "UPDATE players SET discord_user_id = ? WHERE puuid = ?",
+        ).run(discordUser.id, puuid);
       }
       db.prepare(
         "INSERT OR IGNORE INTO subscriptions (puuid, channel_id) VALUES (?, ?)",
@@ -241,9 +277,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     const result = db
-      .prepare(
-        "DELETE FROM subscriptions WHERE channel_id = ? AND puuid = ?",
-      )
+      .prepare("DELETE FROM subscriptions WHERE channel_id = ? AND puuid = ?")
       .run(interaction.channelId, player.puuid);
 
     if (result.changes === 0) {
@@ -365,6 +399,89 @@ client.on("interactionCreate", async (interaction) => {
       `✅ Badge **${badgeKey}** retiré pour **${player.game_name}#${player.tag_line}**.`,
     );
   }
+
+  if (interaction.commandName === "badge-add") {
+    const puuidArg = interaction.options.getString("joueur");
+    const badgeKey = interaction.options.getString("badge");
+
+    const player = db
+      .prepare("SELECT puuid, game_name, tag_line FROM players WHERE puuid = ?")
+      .get(puuidArg);
+
+    if (!player) {
+      return interaction.reply({
+        content: "❌ Joueur introuvable. Utilisez l'autocomplétion.",
+        ephemeral: true,
+      });
+    }
+
+    const { BADGES } = require("./badges");
+    const badge = BADGES.find((b) => b.key === badgeKey);
+
+    if (!badge) {
+      return interaction.reply({
+        content: `❌ Le badge **${badgeKey}** n'existe pas dans la configuration.`,
+        ephemeral: true,
+      });
+    }
+
+    const unlock = registerBadgeUnlock(player.puuid, badge);
+
+    await interaction.reply(
+      `✅ Badge **${badge.name}** ajouté manuellement à **${player.game_name}#${player.tag_line}**. (Total: ${unlock.unlockCount})`,
+    );
+  }
+
+  if (interaction.commandName === "badges") {
+    const rows = db
+      .prepare(
+        `
+      SELECT p.game_name, p.tag_line, pb.badge_key, pb.unlock_count 
+      FROM players p 
+      JOIN player_badges pb ON p.puuid = pb.puuid 
+      ORDER BY p.game_name ASC
+    `,
+      )
+      .all();
+
+    if (!rows.length) {
+      return interaction.reply(
+        "🤷 Aucun badge n'a été débloqué pour le moment.",
+      );
+    }
+
+    const { BADGES } = require("./badges");
+    const grouped = {};
+    rows.forEach((row) => {
+      const name = `${row.game_name}#${row.tag_line}`;
+      if (!grouped[name]) grouped[name] = [];
+      const badgeCfg = BADGES.find((b) => b.key === row.badge_key);
+      const label = badgeCfg ? badgeCfg.name : row.badge_key;
+      grouped[name].push(
+        `${label}${row.unlock_count > 1 ? ` (x${row.unlock_count})` : ""}`,
+      );
+    });
+
+    let message =
+      "🏆 **RÉCAPITULATIF DES BADGES** 🏆\n━━━━━━━━━━━━━━━━━━━━━━━━\n";
+    for (const [player, badges] of Object.entries(grouped)) {
+      message += `👤 **${player}**\n🎖️ ${badges.join(", ")}\n\n`;
+    }
+    message += "━━━━━━━━━━━━━━━━━━━━━━━━";
+
+    await interaction.reply(message);
+  }
+
+  if (interaction.commandName === "badges-list") {
+    const { BADGES } = require("./badges");
+    let message =
+      "📜 **LISTE DES BADGES DISPONIBLES** 📜\n━━━━━━━━━━━━━━━━━━━━━━━━\n";
+    BADGES.forEach((badge) => {
+      message += `✨ **${badge.name}** (${badge.key})\n├ ${badge.description}\n└ *Répétable : ${badge.repeatable ? "Oui" : "Non"}*\n\n`;
+    });
+    message += "━━━━━━━━━━━━━━━━━━━━━━━━";
+    await interaction.reply(message);
+  }
 });
 
 // --- HELPERS ---
@@ -398,69 +515,37 @@ async function syncPUUIDs() {
   }
 }
 
+function formatBadgeAnnouncement(player, unlockedBadges) {
+  if (!unlockedBadges.length) return "";
+
+  const discordLabel = player.discord_user_id
+    ? `<@${player.discord_user_id}>`
+    : `**${player.game_name}**`;
+  const badgesText = unlockedBadges
+    .map((badge) => `le badge **${badge.name}** : ${badge.description}`)
+    .join(", et ");
+  return `🎖️ Grâce à sa performance, ${discordLabel} gagne ${badgesText}.`;
+}
+
 /**
- * Récupère le rank et les LP d'un joueur via l'API Riot.
+ * Récupère le rank et les LP d'un joueur via l'API Riot (by-puuid).
  * @param {string} puuid - Le PUUID du joueur
  * @param {number} queueId - L'ID de la queue (420 = Solo, 440 = Flex)
  * @returns {Promise<{tier: string, rank: string, lp: number} | null>}
  */
 async function fetchPlayerRank(puuid, queueId) {
+  // On n'affiche le rank que pour Solo (420) et Flex (440)
+  if (queueId !== 420 && queueId !== 440) return null;
+
   try {
     const axiosConfig = { headers: { "X-Riot-Token": RIOT_API_KEY } };
-    const platformRoute = await resolvePlatformRoute(puuid, axiosConfig);
 
-    // On vérifie si on a déjà stocké le summonerId
-    let summonerId = null;
-    const cacheRow = db
-      .prepare("SELECT summoner_id FROM players WHERE puuid = ?")
-      .get(puuid);
-
-    if (cacheRow && cacheRow.summoner_id) {
-      summonerId = cacheRow.summoner_id;
-    } else {
-      // Étape 1 : PUUID → summonerId (On le récupère chez Riot si on ne l'a pas)
-      const summonerRes = await axios.get(
-        `https://${platformRoute}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${puuid}`,
-        axiosConfig,
-      );
-      summonerId = summonerRes.data.id;
-
-      // On sauvegarde pour les prochaines requêtes (économie d'appel API)
-      db.prepare("UPDATE players SET summoner_id = ? WHERE puuid = ?").run(summonerId, puuid);
-      console.log(`💾 Summoner ID mis en cache pour ${puuid}`);
-    }
-
-    // Étape 2 : summonerId → entrées ranked
-    let leagueRes;
-    try {
-      leagueRes = await axios.get(
-        `https://${platformRoute}.api.riotgames.com/lol/league/v4/entries/by-summoner/${summonerId}`,
-        axiosConfig,
-      );
-    } catch (leagueError) {
-      // En cas de clé/dev app changée, les IDs chiffrés peuvent devenir invalides : on régénère puis on retente.
-      if (leagueError.response?.status === 403) {
-        const summonerRes = await axios.get(
-          `https://${platformRoute}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${puuid}`,
-          axiosConfig,
-        );
-        const freshSummonerId = summonerRes.data.id;
-        db.prepare("UPDATE players SET summoner_id = ? WHERE puuid = ?").run(
-          freshSummonerId,
-          puuid,
-        );
-        leagueRes = await axios.get(
-          `https://${platformRoute}.api.riotgames.com/lol/league/v4/entries/by-summoner/${freshSummonerId}`,
-          axiosConfig,
-        );
-      } else {
-        throw leagueError;
-      }
-    }
+    // Nouvel endpoint by-puuid sur la plateforme euw1 (fixe)
+    const url = `https://euw1.api.riotgames.com/lol/league/v4/entries/by-puuid/${puuid}`;
+    const leagueRes = await axios.get(url, axiosConfig);
 
     // Cherche la queue correspondante (Solo ou Flex)
-    const queueType =
-      queueId === 440 ? "RANKED_FLEX_SR" : "RANKED_SOLO_5x5";
+    const queueType = queueId === 440 ? "RANKED_FLEX_SR" : "RANKED_SOLO_5x5";
     const entry = leagueRes.data.find((e) => e.queueType === queueType);
 
     if (!entry) return null;
@@ -471,17 +556,17 @@ async function fetchPlayerRank(puuid, queueId) {
       lp: entry.leaguePoints,
     };
   } catch (e) {
-    console.error(`⚠️ Impossible de récupérer le rank : ${e.message}`);
+    if (e.response?.status === 403) {
+      console.error(
+        `❌ Erreur 403 Riot API : Vérifiez si votre clé est bien à jour sur le portail.`,
+      );
+    } else {
+      console.error(
+        `⚠️ Impossible de récupérer le rank (${puuid}) : ${e.message}`,
+      );
+    }
     return null;
   }
-}
-
-async function resolvePlatformRoute(puuid, axiosConfig) {
-  const shardRes = await axios.get(
-    `https://europe.api.riotgames.com/riot/account/v1/active-shards/by-game/lol/by-puuid/${puuid}`,
-    axiosConfig,
-  );
-  return shardRes.data.activeShard.toLowerCase();
 }
 
 /**
@@ -492,9 +577,7 @@ async function resolvePlatformRoute(puuid, axiosConfig) {
  */
 function updateLossStreak(puuid, isWin) {
   if (isWin) {
-    db.prepare("UPDATE players SET loss_streak = 0 WHERE puuid = ?").run(
-      puuid,
-    );
+    db.prepare("UPDATE players SET loss_streak = 0 WHERE puuid = ?").run(puuid);
     return 0;
   }
 
@@ -529,7 +612,9 @@ function ensureSchema() {
 function registerBadgeUnlock(puuid, badge) {
   const nowIso = new Date().toISOString();
   const exists = db
-    .prepare("SELECT unlock_count FROM player_badges WHERE puuid = ? AND badge_key = ?")
+    .prepare(
+      "SELECT unlock_count FROM player_badges WHERE puuid = ? AND badge_key = ?",
+    )
     .get(puuid, badge.key);
 
   if (exists && !badge.repeatable) {
@@ -605,7 +690,7 @@ async function checkMatches() {
           let message = `🚨 [${queueName}] - **${player.game_name}** a perdu avec **${p.championName}** (${p.kills}/${p.deaths}/${p.assists}) en **${min}:${sec}** min.`;
 
           if (rankData) {
-            message += `\n📊 ${rankData.tier} ${rankData.rank} — ${rankData.lp} LP`;
+            message += ` - ${rankData.tier} ${rankData.rank} — ${rankData.lp} LP`;
           }
 
           if (streak > 1) {
