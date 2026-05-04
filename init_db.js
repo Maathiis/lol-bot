@@ -4,7 +4,6 @@ const Database = require("better-sqlite3");
 // Charger l'environnement
 const envPath = process.env.NODE_ENV === "test" ? ".env.test" : ".env";
 require("dotenv").config({ path: envPath });
-console.log(`🌍 Mode : ${process.env.NODE_ENV || "production"} (Chargement de ${envPath})`);
 
 // Assurer l'existence du dossier data
 if (!fs.existsSync("data")) {
@@ -34,17 +33,14 @@ db.exec(`
 // Migrations : ajouts de colonnes si elles n'existent pas encore
 try {
   db.exec("ALTER TABLE players ADD COLUMN loss_streak INTEGER DEFAULT 0");
-  console.log("✅ Colonne loss_streak ajoutée.");
 } catch (e) {}
 
 try {
   db.exec("ALTER TABLE players ADD COLUMN summoner_id TEXT");
-  console.log("✅ Colonne summoner_id ajoutée.");
 } catch (e) {}
 
 try {
   db.exec("ALTER TABLE players ADD COLUMN discord_user_id TEXT");
-  console.log("✅ Colonne discord_user_id ajoutée.");
 } catch (e) {}
 
 db.exec(`
@@ -56,6 +52,39 @@ db.exec(`
     unlock_count INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (puuid, badge_key)
   );
+
+  CREATE TABLE IF NOT EXISTS monthly_losses (
+    puuid TEXT,
+    month TEXT,
+    losses INTEGER DEFAULT 0,
+    PRIMARY KEY (puuid, month)
+  );
+
+  CREATE TABLE IF NOT EXISTS entity_badges (
+    entity_id TEXT NOT NULL,
+    is_discord INTEGER NOT NULL DEFAULT 0,
+    badge_key TEXT NOT NULL,
+    first_unlocked_at TEXT NOT NULL,
+    last_unlocked_at TEXT NOT NULL,
+    unlock_count INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (entity_id, badge_key)
+  );
 `);
+
+// Migration from player_badges to entity_badges
+try {
+  db.exec(`
+    INSERT OR IGNORE INTO entity_badges (entity_id, is_discord, badge_key, first_unlocked_at, last_unlocked_at, unlock_count)
+    SELECT puuid, 0, badge_key, first_unlocked_at, last_unlocked_at, unlock_count FROM player_badges;
+  `);
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE players ADD COLUMN total_losses INTEGER DEFAULT 0");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE players ADD COLUMN max_loss_streak INTEGER DEFAULT 0");
+} catch (e) {}
 
 console.log("✅ Base de données initialisée !");
