@@ -30,7 +30,7 @@ for (const file of commandFiles) {
   }
 }
 
-client.once("clientReady", async () => {
+client.once("ready", async () => {
   ensureSchema();
 
   db.prepare(
