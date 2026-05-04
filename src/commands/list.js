@@ -4,10 +4,11 @@ const { db } = require("../database");
 module.exports = {
   data: new SlashCommandBuilder().setName("list").setDescription("Voir les joueurs surveillés"),
   async execute(interaction) {
+    await interaction.deferReply();
     const rows = db.prepare("SELECT p.game_name, p.tag_line, p.discord_user_id FROM players p JOIN subscriptions s ON p.puuid = s.puuid WHERE s.channel_id = ?").all(interaction.channelId);
 
     if (rows.length === 0) {
-      return interaction.reply("Aucun joueur.");
+      return interaction.editReply("Aucun joueur.");
     }
 
     const userGroups = {};
@@ -39,6 +40,6 @@ module.exports = {
       lines.push(`• **Non lié** : ${unlinked.join(' / ')}`);
     }
 
-    await interaction.reply(`**Joueurs suivis :**\n${lines.join("\n")}`);
+    await interaction.editReply(`**Joueurs suivis :**\n${lines.join("\n")}`);
   }
 };
