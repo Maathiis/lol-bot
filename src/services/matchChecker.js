@@ -6,40 +6,54 @@ const { evaluateTriggeredBadges } = require("../../badges");
 function updateLossStats(player, isWin) {
   const puuid = player.puuid;
   const monthStr = new Date().toISOString().slice(0, 7);
-  
+
   if (isWin) {
     db.prepare("UPDATE players SET loss_streak = 0 WHERE puuid = ?").run(puuid);
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO monthly_losses (puuid, month, losses, games) 
       VALUES (?, ?, 0, 1) 
       ON CONFLICT(puuid, month) DO UPDATE SET games = games + 1
-    `).run(puuid, monthStr);
+    `,
+    ).run(puuid, monthStr);
   } else {
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE players 
       SET loss_streak = loss_streak + 1, 
           total_losses = total_losses + 1 
       WHERE puuid = ?
-    `).run(puuid);
+    `,
+    ).run(puuid);
 
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE players
       SET max_loss_streak = MAX(max_loss_streak, loss_streak)
       WHERE puuid = ?
-    `).run(puuid);
+    `,
+    ).run(puuid);
 
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO monthly_losses (puuid, month, losses, games) 
       VALUES (?, ?, 1, 1) 
       ON CONFLICT(puuid, month) DO UPDATE SET losses = losses + 1, games = games + 1
-    `).run(puuid, monthStr);
+    `,
+    ).run(puuid, monthStr);
   }
 
   if (player.discord_user_id) {
-    const row = db.prepare("SELECT SUM(loss_streak) as sum_streak FROM players WHERE discord_user_id = ?").get(player.discord_user_id);
+    const row = db
+      .prepare(
+        "SELECT SUM(loss_streak) as sum_streak FROM players WHERE discord_user_id = ?",
+      )
+      .get(player.discord_user_id);
     return row ? row.sum_streak : 0;
   } else {
-    const row = db.prepare("SELECT loss_streak FROM players WHERE puuid = ?").get(puuid);
+    const row = db
+      .prepare("SELECT loss_streak FROM players WHERE puuid = ?")
+      .get(puuid);
     return row ? row.loss_streak : 0;
   }
 }
@@ -75,15 +89,37 @@ function formatBadgeAnnouncement(player, unlockedBadges) {
   const discordLabel = player.discord_user_id
     ? `<@${player.discord_user_id}>`
     : `**${player.game_name}**`;
-  const badgesText = unlockedBadges
-    .map((badge) => `le badge **${badge.name}** (${badge.rank}) : ${badge.description}`)
-    .join(", et ");
-  return `🎖️ Grâce à sa défaite légendaire, ${discordLabel} gagne ${badgesText}.`;
+
+  let announcement = "";
+
+  const normalBadges = unlockedBadges.filter((b) => b.rank !== "Secret");
+  const secretBadges = unlockedBadges.filter((b) => b.rank === "Secret");
+
+  if (normalBadges.length > 0) {
+    const badgesText = normalBadges
+      .map(
+        (badge) =>
+          `le badge **${badge.name}** (${badge.rank}) : ${badge.description}`,
+      )
+      .join(", et ");
+    announcement += `🎖️ Grâce à sa performance, ${discordLabel} gagne ${badgesText}.\n`;
+  }
+
+  if (secretBadges.length > 0) {
+    const secretText = secretBadges
+      .map((badge) => `**${badge.name}** : *${badge.description}*`)
+      .join(", et ");
+    announcement += `🚨 **BWAHAHAHAH!!** ${discordLabel} vient de gagner le badge **SECRET** 🤫 : ${secretText} !!\n`;
+  }
+
+  return announcement.trim();
 }
 
 async function checkMatches(client) {
   const players = db.prepare("SELECT * FROM players").all();
-  console.log(`🚀 Lancement de la vérification pour ${players.length} joueurs...`);
+  console.log(
+    `🚀 Lancement de la vérification pour ${players.length} joueurs...`,
+  );
 
   for (const player of players) {
     try {
@@ -130,11 +166,15 @@ async function checkMatches(client) {
             .prepare("SELECT channel_id FROM subscriptions WHERE puuid = ?")
             .all(player.puuid);
 
-          const triggeredBadges = evaluateTriggeredBadges(p, activeStreak, info.gameDuration);
+          const triggeredBadges = evaluateTriggeredBadges(
+            p,
+            activeStreak,
+            info.gameDuration,
+          );
           const unlockedBadges = [];
           const entityId = player.discord_user_id || player.puuid;
           const isDiscord = player.discord_user_id ? 1 : 0;
-          
+
           for (const badge of triggeredBadges) {
             const unlock = registerBadgeUnlock(entityId, isDiscord, badge);
             if (unlock.isNew) {
@@ -146,7 +186,9 @@ async function checkMatches(client) {
           }
 
           for (const sub of subs) {
-            const chan = await client.channels.fetch(sub.channel_id).catch(() => null);
+            const chan = await client.channels
+              .fetch(sub.channel_id)
+              .catch(() => null);
             if (chan) await chan.send(message);
           }
         }
