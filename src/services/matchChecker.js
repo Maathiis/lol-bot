@@ -222,11 +222,24 @@ async function checkMatches(client) {
             .prepare("SELECT channel_id FROM subscriptions WHERE puuid = ?")
             .all(player.puuid);
 
-          const triggeredBadges = evaluateTriggeredBadges(
-            p,
-            activeStreak,
-            info,
-          );
+          // --- BADGE EVALUATION (Two Passes for Collection Badges) ---
+          const currentBadges = db.prepare("SELECT badge_key FROM entity_badges WHERE entity_id = ?").all(entityId).map(b => b.badge_key);
+          
+          let triggeredBadges = evaluateTriggeredBadges(p, activeStreak, info, currentBadges);
+          
+          // If new badges were earned, check if they unlocked the Collector badge
+          if (triggeredBadges.length > 0) {
+            const updatedBadges = [...currentBadges, ...triggeredBadges.map(b => b.key)];
+            const secondPass = evaluateTriggeredBadges(p, activeStreak, info, updatedBadges);
+            
+            // Add any NEW badges found in the second pass
+            secondPass.forEach(b => {
+              if (!triggeredBadges.find(tb => tb.key === b.key)) {
+                triggeredBadges.push(b);
+              }
+            });
+          }
+
           const unlockedBadges = [];
           const entityId = player.discord_user_id || player.puuid;
           const isDiscord = player.discord_user_id ? 1 : 0;
