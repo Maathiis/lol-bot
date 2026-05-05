@@ -9,10 +9,10 @@ async function announceMonthlyStats(client) {
     SELECT 
       COALESCE(p.discord_user_id, p.game_name || '#' || p.tag_line) as identifier,
       MAX(p.discord_user_id) as is_discord,
-      SUM(ml.losses) as total_month
-    FROM monthly_losses ml
-    JOIN players p ON p.puuid = ml.puuid
-    WHERE ml.month = ?
+      SUM(ms.losses) as total_month
+    FROM monthly_stats ms
+    JOIN accounts p ON p.puuid = ms.puuid
+    WHERE ms.month = ?
     GROUP BY identifier
     ORDER BY total_month DESC
   `).all(prevMonthStr);
@@ -33,7 +33,7 @@ async function announceMonthlyStats(client) {
   }
   msg += "━━━━━━━━━━━━━━━━━━━━━━━━";
 
-  const channels = db.prepare("SELECT DISTINCT channel_id FROM subscriptions").all();
+  const channels = db.prepare("SELECT DISTINCT channel_id FROM guild_tracking").all();
   for (const c of channels) {
     const chan = await client.channels.fetch(c.channel_id).catch(() => null);
     if (chan) await chan.send(msg);

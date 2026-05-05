@@ -3,23 +3,38 @@ const { db } = require("../database");
 const { RIOT_API_KEY, QUEUE_TYPES, fetchPlayerRank } = require("./riot");
 const { evaluateTriggeredBadges } = require("../../badges");
 
-function updateLossStats(player, isWin) {
+function updateLossStats(player, isWin, timeSpentDead = 0) {
   const puuid = player.puuid;
   const monthStr = new Date().toISOString().slice(0, 7);
 
+  // Mise à jour des stats globales (dans tous les cas)
+  db.prepare(`
+    UPDATE accounts 
+    SET total_time_spent_dead = total_time_spent_dead + ?
+    WHERE puuid = ?
+  `).run(timeSpentDead, puuid);
+  
   if (isWin) {
-    db.prepare("UPDATE players SET loss_streak = 0 WHERE puuid = ?").run(puuid);
+    if (player.discord_user_id) {
+      // Si lié à Discord, une victoire reset TOUS les comptes de l'utilisateur
+      db.prepare("UPDATE accounts SET loss_streak = 0 WHERE discord_user_id = ?").run(player.discord_user_id);
+    } else {
+      // Sinon, on reset uniquement ce compte
+      db.prepare("UPDATE accounts SET loss_streak = 0 WHERE puuid = ?").run(puuid);
+    }
     db.prepare(
       `
-      INSERT INTO monthly_losses (puuid, month, losses, games) 
-      VALUES (?, ?, 0, 1) 
-      ON CONFLICT(puuid, month) DO UPDATE SET games = games + 1
+      INSERT INTO monthly_stats (puuid, month, losses, games, total_time_spent_dead) 
+      VALUES (?, ?, 0, 1, ?) 
+      ON CONFLICT(puuid, month) DO UPDATE SET 
+        games = games + 1, 
+        total_time_spent_dead = total_time_spent_dead + ?
     `,
-    ).run(puuid, monthStr);
+    ).run(puuid, monthStr, timeSpentDead, timeSpentDead);
   } else {
     db.prepare(
       `
-      UPDATE players 
+      UPDATE accounts 
       SET loss_streak = loss_streak + 1, 
           total_losses = total_losses + 1 
       WHERE puuid = ?
@@ -28,7 +43,7 @@ function updateLossStats(player, isWin) {
 
     db.prepare(
       `
-      UPDATE players
+      UPDATE accounts
       SET max_loss_streak = MAX(max_loss_streak, loss_streak)
       WHERE puuid = ?
     `,
@@ -36,35 +51,39 @@ function updateLossStats(player, isWin) {
 
     db.prepare(
       `
-      INSERT INTO monthly_losses (puuid, month, losses, games) 
-      VALUES (?, ?, 1, 1) 
-      ON CONFLICT(puuid, month) DO UPDATE SET losses = losses + 1, games = games + 1
+      INSERT INTO monthly_stats (puuid, month, losses, games, total_time_spent_dead) 
+      VALUES (?, ?, 1, 1, ?) 
+      ON CONFLICT(puuid, month) DO UPDATE SET 
+        losses = losses + 1, 
+        games = games + 1, 
+        total_time_spent_dead = total_time_spent_dead + ?
     `,
-    ).run(puuid, monthStr);
+    ).run(puuid, monthStr, timeSpentDead, timeSpentDead);
   }
 
   if (player.discord_user_id) {
     const row = db
       .prepare(
-        "SELECT SUM(loss_streak) as sum_streak FROM players WHERE discord_user_id = ?",
+        "SELECT SUM(loss_streak) as sum_streak FROM accounts WHERE discord_user_id = ?",
       )
       .get(player.discord_user_id);
     return row ? row.sum_streak : 0;
   } else {
     const row = db
-      .prepare("SELECT loss_streak FROM players WHERE puuid = ?")
+      .prepare("SELECT loss_streak FROM accounts WHERE puuid = ?")
       .get(puuid);
     return row ? row.loss_streak : 0;
   }
 }
 
-function registerBadgeUnlock(entityId, isDiscord, badge) {
+function registerBadgeUnlock(puuid, badge) {
   const nowIso = new Date().toISOString();
+  // On stocke toujours sur le PUUID du compte LoL
   const exists = db
     .prepare(
-      "SELECT unlock_count FROM entity_badges WHERE entity_id = ? AND badge_key = ?",
+      "SELECT unlock_count FROM badges WHERE entity_id = ? AND badge_key = ?",
     )
-    .get(entityId, badge.key);
+    .get(puuid, badge.key);
 
   if (exists && !badge.repeatable) {
     return { isNew: false, unlockCount: exists.unlock_count };
@@ -72,14 +91,14 @@ function registerBadgeUnlock(entityId, isDiscord, badge) {
 
   if (!exists) {
     db.prepare(
-      "INSERT INTO entity_badges (entity_id, is_discord, badge_key, first_unlocked_at, last_unlocked_at, unlock_count) VALUES (?, ?, ?, ?, ?, 1)",
-    ).run(entityId, isDiscord ? 1 : 0, badge.key, nowIso, nowIso);
+      "INSERT INTO badges (entity_id, is_discord, badge_key, first_unlocked_at, last_unlocked_at, unlock_count) VALUES (?, 0, ?, ?, ?, 1)",
+    ).run(puuid, badge.key, nowIso, nowIso);
     return { isNew: true, unlockCount: 1 };
   }
 
   db.prepare(
-    "UPDATE entity_badges SET unlock_count = unlock_count + 1, last_unlocked_at = ? WHERE entity_id = ? AND badge_key = ?",
-  ).run(nowIso, entityId, badge.key);
+    "UPDATE badges SET unlock_count = unlock_count + 1, last_unlocked_at = ? WHERE entity_id = ? AND badge_key = ?",
+  ).run(nowIso, puuid, badge.key);
   return { isNew: true, unlockCount: exists.unlock_count + 1 };
 }
 
@@ -117,17 +136,17 @@ async function formatBadgeAnnouncement(client, player, unlockedBadges) {
     const secretText = secretBadges
       .map((badge) => `**${badge.name}** : *${badge.description}*`)
       .join(", et ");
-    announcement += `🚨 **BWAHAHAHAH!!** ${discordLabel} vient de gagner le badge **SECRET** 🤫 : ${secretText} !!\n`;
+    announcement += `🚨 ${discordLabel} vient de gagner le badge **SECRET** 🤫 : ${secretText} !!\n`;
   }
 
   return announcement.trim();
 }
 
 async function checkMatches(client) {
-  const players = db.prepare("SELECT * FROM players").all();
+  const accounts = db.prepare("SELECT * FROM accounts").all();
   const now = Date.now();
 
-  for (const player of players) {
+  for (const player of accounts) {
     try {
       // --- LOGIQUE D'INTERVALLE ADAPTATIF ---
       const lastMatchAt = player.last_match_at || 0;
@@ -147,7 +166,7 @@ async function checkMatches(client) {
       if (timeSinceLastCheck < interval) continue;
 
       // Mise à jour du timestamp de vérification
-      db.prepare("UPDATE players SET last_checked_at = ? WHERE puuid = ?").run(
+      db.prepare("UPDATE accounts SET last_checked_at = ? WHERE puuid = ?").run(
         now,
         player.puuid,
       );
@@ -155,7 +174,7 @@ async function checkMatches(client) {
       console.log(`⏳ Vérification : ${player.game_name}`);
       const axiosConfig = { headers: { "X-Riot-Token": RIOT_API_KEY } };
 
-      // On récupère les 5 derniers matchs pour être sûr de ne rien rater
+      // On récupère les 2 derniers matchs
       const lolMatchUrl = `https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/${player.puuid}/ids?count=2`;
       const lolRes = await axios.get(lolMatchUrl, axiosConfig);
       const matchIds = lolRes.data || [];
@@ -165,19 +184,17 @@ async function checkMatches(client) {
       if (player.last_match_id) {
         const lastIndex = matchIds.indexOf(player.last_match_id);
         if (lastIndex === -1) {
-          // Soit c'est le premier match, soit il a joué plus de 5 parties depuis le dernier check
           newMatchIds = matchIds;
         } else {
-          // On ne prend que ce qui est plus récent que last_match_id
           newMatchIds = matchIds.slice(0, lastIndex);
         }
       } else if (matchIds.length > 0) {
-        // Premier lancement pour ce joueur
+        // Premier lancement
         db.prepare(
-          "UPDATE players SET last_match_id = ?, last_match_at = ? WHERE puuid = ?",
+          "UPDATE accounts SET last_match_id = ?, last_match_at = ? WHERE puuid = ?",
         ).run(
           matchIds[0],
-          now, // On initialise avec maintenant pour éviter de remonter tout l'historique
+          now,
           player.puuid,
         );
         continue;
@@ -194,12 +211,12 @@ async function checkMatches(client) {
 
         // Mise à jour immédiate du dernier match traité
         db.prepare(
-          "UPDATE players SET last_match_id = ?, last_match_at = ? WHERE puuid = ?",
+          "UPDATE accounts SET last_match_id = ?, last_match_at = ? WHERE puuid = ?",
         ).run(matchId, info.gameEndTimestamp, player.puuid);
 
         if (!p || info.gameDuration <= 300) continue;
 
-        const activeStreak = updateLossStats(player, p.win);
+        const activeStreak = updateLossStats(player, p.win, p.totalTimeSpentDead);
 
         if (!p.win) {
           const queueName = QUEUE_TYPES[info.queueId] || "Partie";
@@ -208,6 +225,7 @@ async function checkMatches(client) {
 
           const rankData = await fetchPlayerRank(player.puuid, info.queueId);
 
+          // On garde toujours le pseudo LoL pour le message principal
           let message = `🚨 [${queueName}] - **${player.game_name}** a perdu avec **${p.championName}** (${p.kills}/${p.deaths}/${p.assists}) en **${min}:${sec}** min.`;
 
           if (rankData) {
@@ -219,20 +237,38 @@ async function checkMatches(client) {
           }
 
           const subs = db
-            .prepare("SELECT channel_id FROM subscriptions WHERE puuid = ?")
+            .prepare("SELECT channel_id FROM guild_tracking WHERE puuid = ?")
             .all(player.puuid);
 
-          // --- BADGE EVALUATION (Two Passes for Collection Badges) ---
-          const currentBadges = db.prepare("SELECT badge_key FROM entity_badges WHERE entity_id = ?").all(entityId).map(b => b.badge_key);
+          // Récupération des badges cumulés de l'utilisateur Discord (pour éviter le spam s'il a déjà le badge sur un autre compte)
+          // ET récupération du temps de mort TOTAL consolidé
+          let ownedBadgeKeys = [];
+          let totalDeadConsolidated = 0;
           
-          let triggeredBadges = evaluateTriggeredBadges(p, activeStreak, info, currentBadges);
-          
-          // If new badges were earned, check if they unlocked the Collector badge
-          if (triggeredBadges.length > 0) {
-            const updatedBadges = [...currentBadges, ...triggeredBadges.map(b => b.key)];
-            const secondPass = evaluateTriggeredBadges(p, activeStreak, info, updatedBadges);
+          if (player.discord_user_id) {
+            ownedBadgeKeys = db.prepare(`
+              SELECT DISTINCT badge_key 
+              FROM badges 
+              WHERE entity_id IN (SELECT puuid FROM accounts WHERE discord_user_id = ?)
+            `).all(player.discord_user_id).map(b => b.badge_key);
             
-            // Add any NEW badges found in the second pass
+            const rowDead = db.prepare("SELECT SUM(total_time_spent_dead) as sum_dead FROM accounts WHERE discord_user_id = ?").get(player.discord_user_id);
+            totalDeadConsolidated = rowDead?.sum_dead || 0;
+          } else {
+            ownedBadgeKeys = db.prepare("SELECT badge_key FROM badges WHERE entity_id = ?").all(player.puuid).map(b => b.badge_key);
+            totalDeadConsolidated = player.total_time_spent_dead || 0;
+          }
+
+          // Gestion du palier (Tier) pour le badge de rétrogradation
+          const oldTier = player.last_tier;
+          const newTier = rankData ? rankData.tier : null;
+
+          // --- BADGE EVALUATION ---
+          let triggeredBadges = evaluateTriggeredBadges(p, activeStreak, info, ownedBadgeKeys, totalDeadConsolidated, oldTier, newTier);
+          
+          if (triggeredBadges.length > 0) {
+            const updatedBadges = [...ownedBadgeKeys, ...triggeredBadges.map(b => b.key)];
+            const secondPass = evaluateTriggeredBadges(p, activeStreak, info, updatedBadges, totalDeadConsolidated, oldTier, newTier);
             secondPass.forEach(b => {
               if (!triggeredBadges.find(tb => tb.key === b.key)) {
                 triggeredBadges.push(b);
@@ -241,11 +277,9 @@ async function checkMatches(client) {
           }
 
           const unlockedBadges = [];
-          const entityId = player.discord_user_id || player.puuid;
-          const isDiscord = player.discord_user_id ? 1 : 0;
-
           for (const badge of triggeredBadges) {
-            const unlock = registerBadgeUnlock(entityId, isDiscord, badge);
+            // On enregistre TOUJOURS sur le PUUID du compte LoL
+            const unlock = registerBadgeUnlock(player.puuid, badge);
             if (unlock.isNew) {
               unlockedBadges.push(badge);
             }
@@ -254,11 +288,22 @@ async function checkMatches(client) {
             message += `\n${await formatBadgeAnnouncement(client, player, unlockedBadges)}`;
           }
 
+          // Mise à jour du palier dans la base pour la prochaine fois
+          if (newTier) {
+            db.prepare("UPDATE accounts SET last_tier = ? WHERE puuid = ?").run(newTier, player.puuid);
+          }
+
           for (const sub of subs) {
             const chan = await client.channels
               .fetch(sub.channel_id)
               .catch(() => null);
             if (chan) await chan.send(message);
+          }
+        } else {
+          // Même en cas de victoire, on met à jour le tier pour suivre les montées/descentes
+          const rankData = await fetchPlayerRank(player.puuid, info.queueId);
+          if (rankData) {
+            db.prepare("UPDATE accounts SET last_tier = ? WHERE puuid = ?").run(rankData.tier, player.puuid);
           }
         }
       }

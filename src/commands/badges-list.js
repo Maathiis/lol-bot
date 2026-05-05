@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const { BADGES } = require("../../badges");
+const { db } = require("../database");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -23,6 +24,8 @@ module.exports = {
     };
 
     const embeds = [];
+
+    const unlockedKeys = db.prepare("SELECT DISTINCT badge_key FROM badges").all().map(r => r.badge_key);
 
     ranks.forEach((rank) => {
       const rankBadges = BADGES.filter((b) => b.rank === rank);

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const axios = require("axios");
 const { db } = require("../database");
 const { RIOT_API_KEY, QUEUE_TYPES, getChampionName } = require("../services/riot");
@@ -12,12 +12,13 @@ module.exports = {
 
     const players = db.prepare(`
       SELECT DISTINCT p.puuid, p.game_name, p.tag_line, p.discord_user_id, p.loss_streak 
-      FROM players p 
-      JOIN subscriptions s ON p.puuid = s.puuid 
+      FROM accounts p 
+      JOIN guild_tracking s ON p.puuid = s.puuid 
       WHERE s.guild_id = ?
     `).all(interaction.guildId);
+    
     if (players.length === 0) {
-      return interaction.editReply("❌ Aucun joueur n'est surveillé.");
+      return interaction.editReply("❌ Aucun joueur n'est surveillé sur ce serveur.");
     }
 
     const livePlayers = [];
@@ -44,17 +45,18 @@ module.exports = {
 
           let activeStreak = player.loss_streak || 0;
           if (player.discord_user_id) {
-            const row = db.prepare("SELECT SUM(loss_streak) as sum_streak FROM players WHERE discord_user_id = ?").get(player.discord_user_id);
+            const row = db.prepare("SELECT SUM(loss_streak) as sum_streak FROM accounts WHERE discord_user_id = ?").get(player.discord_user_id);
             if (row) activeStreak = row.sum_streak;
           }
 
           let badgeWarning = "";
-          if (activeStreak === 4) badgeWarning = "\n🚨 *Balle de match pour le badge **Jamais 4 sans 5***";
-          else if (activeStreak === 9) badgeWarning = "\n🚨 *Balle de match pour le badge **La chute libre***";
-          else if (activeStreak === 14) badgeWarning = "\n🚨 *Balle de match pour le badge **Le fond du gouffre***";
+          if (activeStreak === 4) badgeWarning = "\n🚨 *Balle de match (**Jamais 4 sans 5**)*";
+          else if (activeStreak === 9) badgeWarning = "\n🚨 *Balle de match (**La chute libre**)*";
+          else if (activeStreak === 14) badgeWarning = "\n🚨 *Balle de match (**Le fond du gouffre**)*";
 
           livePlayers.push({
              name: player.game_name,
+             tag: player.tag_line,
              champion: championName,
              queue: queueName,
              duration: durationStr,
@@ -62,25 +64,29 @@ module.exports = {
           });
         }
       } catch (e) {
-        if (e.response && e.response.status === 404) {
-          // Joueur n'est pas en game, on ignore silencieusement
-        } else {
+        if (!e.response || e.response.status !== 404) {
           console.error(`Erreur Spectator API pour ${player.game_name}: ${e.message}`);
         }
       }
-      // Petite pause pour ne pas saturer l'API Riot (max 20 req/sec)
-      await new Promise(r => setTimeout(r, 100)); 
+      await new Promise(r => setTimeout(r, 50)); 
     }
 
     if (livePlayers.length === 0) {
       return interaction.editReply("😴 Aucun joueur surveillé n'est actuellement en partie.");
     }
 
-    const embed = {
-      title: "🔴 Joueurs en jeu",
-      color: 0xff0000,
-      description: livePlayers.map(p => `**${p.name}** joue **${p.champion}**\n↳ ⏳ ${p.duration} min | 🕹️ ${p.queue}${p.badgeWarning}`).join("\n\n")
-    };
+    const embed = new EmbedBuilder()
+      .setTitle("🔴 Joueurs actuellement en jeu")
+      .setColor(0xff0000)
+      .setTimestamp();
+
+    livePlayers.forEach(p => {
+      embed.addFields({
+        name: `👤 ${p.name}#${p.tag}`,
+        value: `🕹️ **${p.champion}**\n⌛ Durée : \`${p.duration}\`\n🗺️ Mode : \`${p.queue}\`${p.badgeWarning}`,
+        inline: true
+      });
+    });
 
     await interaction.editReply({ embeds: [embed] });
   }

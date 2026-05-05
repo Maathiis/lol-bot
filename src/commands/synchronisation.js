@@ -1,26 +1,28 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
-const axios = require("axios");
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require("discord.js");
 const { db } = require("../database");
-const { RIOT_API_KEY } = require("../services/riot");
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("synchronisation")
-    .setDescription("Synchroniser les PUUID avec la clé API actuelle (Admin)")
+    .setDescription("Synchroniser les membres du serveur avec la base de données (Admin)")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   async execute(interaction) {
-    await interaction.deferReply();
-    const players = db.prepare("SELECT * FROM players").all();
-    for (const player of players) {
-      try {
-        const res = await axios.get(`https://europe.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${player.game_name}/${player.tag_line}`, { headers: { "X-Riot-Token": RIOT_API_KEY } });
-        const newPuuid = res.data.puuid;
-        if (newPuuid && newPuuid !== player.puuid) {
-          db.prepare("UPDATE subscriptions SET puuid = ? WHERE puuid = ?").run(newPuuid, player.puuid);
-          db.prepare("UPDATE players SET puuid = ? WHERE puuid = ?").run(newPuuid, player.puuid);
-        }
-      } catch (e) {}
+    await interaction.deferReply({ ephemeral: true });
+    const members = await interaction.guild.members.fetch();
+    let count = 0;
+    
+    for (const [id, member] of members) {
+      const result = db.prepare("UPDATE accounts SET discord_user_id = ? WHERE discord_user_id = ?").run(id, id);
+      if (result.changes > 0) count++;
     }
-    await interaction.editReply("✅ Synchronisation des PUUID terminée.");
+
+    const embed = new EmbedBuilder()
+      .setTitle("🔄 Synchronisation terminée")
+      .setColor(0x3498db)
+      .setDescription(`La synchronisation des membres a été effectuée.`)
+      .addFields({ name: "Utilisateurs mis à jour", value: `\`${count}\`` })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
   }
 };

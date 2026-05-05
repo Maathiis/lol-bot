@@ -30,16 +30,19 @@ for (const file of commandFiles) {
   }
 }
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   ensureSchema();
 
+  // Nettoyage des comptes orphelins (ceux qui ne sont plus suivis sur aucun serveur)
   db.prepare(
-    "DELETE FROM players WHERE puuid NOT IN (SELECT DISTINCT puuid FROM subscriptions)",
+    "DELETE FROM accounts WHERE puuid NOT IN (SELECT DISTINCT puuid FROM guild_tracking)",
   ).run();
 
   // Déploiement des commandes en cache local
   const commandsData = client.commands.map((c) => c.data.toJSON());
   await client.application.commands.set(commandsData);
+
+  console.log("✅ Bot prêt et base de données synchronisée !");
 
   setInterval(() => checkMatches(client), 60000);
 
@@ -74,7 +77,7 @@ client.on("interactionCreate", async (interaction) => {
     ) {
       const players = db
         .prepare(
-          "SELECT DISTINCT p.game_name, p.tag_line, p.puuid FROM players p JOIN subscriptions s ON p.puuid = s.puuid WHERE (p.game_name LIKE ? OR (p.game_name || '#' || p.tag_line) LIKE ?) AND s.guild_id = ?",
+          "SELECT DISTINCT p.game_name, p.tag_line, p.puuid FROM accounts p JOIN guild_tracking s ON p.puuid = s.puuid WHERE (p.game_name LIKE ? OR (p.game_name || '#' || p.tag_line) LIKE ?) AND s.guild_id = ?",
         )
         .all(`${focusedOption.value}%`, `%${focusedOption.value}%`, interaction.guildId)
         .slice(0, 25);
@@ -91,20 +94,15 @@ client.on("interactionCreate", async (interaction) => {
       let availableBadges = BADGES;
 
       if (interaction.commandName === "badge-remove") {
-        const subcommand = interaction.options.getSubcommand(false);
         let entityId;
-        if (subcommand === "discord") {
-          entityId = interaction.options.get("utilisateur")?.value;
-        } else if (subcommand === "lol") {
-          let lolUser = interaction.options.getString("joueur");
-          if (lolUser) {
-            const player = db.prepare("SELECT puuid FROM players WHERE puuid = ? OR game_name = ?").get(lolUser, lolUser);
-            if (player) entityId = player.puuid;
-          }
+        let lolUser = interaction.options.getString("joueur");
+        if (lolUser) {
+          const player = db.prepare("SELECT puuid FROM accounts WHERE puuid = ? OR game_name = ?").get(lolUser, lolUser);
+          if (player) entityId = player.puuid;
         }
 
         if (entityId) {
-          const ownedBadgeKeys = db.prepare("SELECT badge_key FROM entity_badges WHERE entity_id = ?").all(entityId).map(r => r.badge_key);
+          const ownedBadgeKeys = db.prepare("SELECT badge_key FROM badges WHERE entity_id = ?").all(entityId).map(r => r.badge_key);
           availableBadges = BADGES.filter(b => ownedBadgeKeys.includes(b.key));
         } else {
           availableBadges = []; // Force picking a user first

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require("discord.js");
 const axios = require("axios");
 const { db } = require("../database");
 const { RIOT_API_KEY } = require("../services/riot");
@@ -24,19 +24,26 @@ module.exports = {
       );
       const { puuid, gameName, tagLine } = accRes.data;
 
-      db.prepare("INSERT OR IGNORE INTO players (puuid, game_name, tag_line, discord_user_id) VALUES (?, ?, ?, ?)").run(puuid, gameName, tagLine, discordUser ? discordUser.id : null);
+      db.prepare("INSERT OR IGNORE INTO accounts (puuid, game_name, tag_line, discord_user_id) VALUES (?, ?, ?, ?)").run(puuid, gameName, tagLine, discordUser ? discordUser.id : null);
       if (discordUser) {
-        db.prepare("UPDATE players SET discord_user_id = ? WHERE puuid = ?").run(discordUser.id, puuid);
+        db.prepare("UPDATE accounts SET discord_user_id = ? WHERE puuid = ?").run(discordUser.id, puuid);
       }
       db.prepare(`
-        INSERT INTO subscriptions (puuid, channel_id, guild_id) 
+        INSERT INTO guild_tracking (puuid, channel_id, guild_id) 
         VALUES (?, ?, ?) 
         ON CONFLICT(puuid, channel_id) DO UPDATE SET guild_id = excluded.guild_id
       `).run(puuid, interaction.channelId, interaction.guildId);
 
-      await interaction.editReply(discordUser ? `✅ **${gameName}#${tagLine}** est sous surveillance ici, lié à ${discordUser}.` : `✅ **${gameName}#${tagLine}** est maintenant sous surveillance ici.`);
+      const embed = new EmbedBuilder()
+        .setTitle("✅ Joueur ajouté")
+        .setColor(0x00ff00)
+        .setDescription(`Le compte **${gameName}#${tagLine}** est maintenant sous surveillance.`)
+        .addFields({ name: "Lien Discord", value: discordUser ? `${discordUser}` : "Aucun", inline: true })
+        .setTimestamp();
+
+      await interaction.editReply({ embeds: [embed] });
     } catch (e) {
-      await interaction.editReply("❌ Introuvable.");
+      await interaction.editReply({ content: "❌ Impossible de trouver ce compte Riot. Vérifiez le pseudo et le tag.", ephemeral: true });
     }
   }
 };

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require("discord.js");
 const { db } = require("../database");
 
 module.exports = {
@@ -11,11 +11,19 @@ module.exports = {
   async execute(interaction) {
     const identifiant = interaction.options.getString("joueur");
     const discordUser = interaction.options.getUser("discord");
-    const player = db.prepare("SELECT puuid, game_name, tag_line FROM players WHERE puuid = ? OR game_name = ?").get(identifiant, identifiant);
+    const player = db.prepare("SELECT puuid, game_name, tag_line FROM accounts WHERE puuid = ? OR game_name = ?").get(identifiant, identifiant);
 
-    if (!player) return interaction.reply({ content: `❌ Joueur introuvable dans le suivi: **${identifiant}**`, ephemeral: true });
+    if (!player) return interaction.reply({ content: `❌ Joueur introuvable dans le suivi : **${identifiant}**`, ephemeral: true });
 
-    db.prepare("UPDATE players SET discord_user_id = ? WHERE puuid = ?").run(discordUser.id, player.puuid);
-    await interaction.reply(`🔗 **${player.game_name}#${player.tag_line}** est maintenant lié à ${discordUser}.`);
+    db.prepare("UPDATE accounts SET discord_user_id = ? WHERE puuid = ?").run(discordUser.id, player.puuid);
+    
+    const embed = new EmbedBuilder()
+      .setTitle("🔗 Liaison effectuée")
+      .setColor(0x3498db)
+      .setDescription(`Le compte **${player.game_name}#${player.tag_line}** est maintenant lié.`)
+      .addFields({ name: "Compte Discord", value: discordUser.toString() })
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [embed] });
   }
 };

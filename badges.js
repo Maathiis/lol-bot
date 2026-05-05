@@ -10,6 +10,38 @@ const BADGES = [
     trigger: ({ streak }) => streak === 5,
   },
   {
+    key: "DEMOTION_TIER",
+    name: "Le Grand Saut",
+    description: "Rétrograder dans un palier inférieur ",
+    rank: "Bronze",
+    version: 1,
+    repeatable: true,
+    trigger: ({ oldTier, newTier }) => {
+      if (
+        !oldTier ||
+        !newTier ||
+        oldTier === "UNRANKED" ||
+        newTier === "UNRANKED"
+      )
+        return false;
+      const TIERS = [
+        "IRON",
+        "BRONZE",
+        "SILVER",
+        "GOLD",
+        "PLATINUM",
+        "EMERALD",
+        "DIAMOND",
+        "MASTER",
+        "GRANDMASTER",
+        "CHALLENGER",
+      ];
+      const oldIdx = TIERS.indexOf(oldTier.toUpperCase());
+      const newIdx = TIERS.indexOf(newTier.toUpperCase());
+      return oldIdx > -1 && newIdx > -1 && newIdx < oldIdx;
+    },
+  },
+  {
     key: "VICTIME_BRONZE",
     name: "Victime",
     description: "Mourir plus de 12 fois dans une partie",
@@ -194,7 +226,8 @@ const BADGES = [
     version: 1,
     repeatable: true,
     trigger: ({ participant, info }) =>
-      info.gameMode === "ARAM" && (participant.challenges?.snowballHit || 0) >= 15,
+      info.gameMode === "ARAM" &&
+      (participant.challenges?.snowballHit || 0) >= 15,
   },
 
   // --- OR ---
@@ -315,14 +348,17 @@ const BADGES = [
 
   // --- PLATINE ---
   {
-    key: "COLLECTOR_GEN1",
-    name: "Collectionneur G1",
-    description: "Avoir débloqué tous les badges de la 1ère génération",
+    key: "PLATINE_V1",
+    name: "Maître de la Défaite (V1)",
+    description: "Posséder tous les badges de la génération 1 (Bronze à Or)",
     rank: "Platine",
+    version: 1,
     repeatable: false,
     trigger: ({ ownedBadgeKeys }) => {
-      const v1BadgeKeys = BADGES.filter(b => b.version === 1).map(b => b.key);
-      return v1BadgeKeys.every(key => ownedBadgeKeys.includes(key));
+      const v1Badges = BADGES.filter(
+        (b) => b.version === 1 && ["Bronze", "Argent", "Or"].includes(b.rank),
+      );
+      return v1Badges.every((v1) => ownedBadgeKeys.includes(v1.key));
     },
   },
 
@@ -414,9 +450,26 @@ const BADGES = [
     trigger: ({ gameDuration, info }) =>
       info.gameMode === "ARAM" && gameDuration < 600,
   },
+  {
+    key: "LIFETIME_DEAD_10H",
+    name: "Collectionneur de Gris",
+    description:
+      "Avoir passé plus de 10 heures mort au total sur tous ses comptes",
+    rank: "Secret",
+    repeatable: false,
+    trigger: ({ totalTimeDead }) => totalTimeDead >= 36000,
+  },
 ];
 
-function evaluateTriggeredBadges(participant, streak, info, ownedBadgeKeys = []) {
+function evaluateTriggeredBadges(
+  participant,
+  streak,
+  info,
+  ownedBadgeKeys = [],
+  totalTimeDead = 0,
+  oldTier = null,
+  newTier = null,
+) {
   const teamId = participant.teamId;
   const ownTeamStats = info.teams.find((t) => t.teamId === teamId);
   const opponentTeamStats = info.teams.find((t) => t.teamId !== teamId);
@@ -441,6 +494,9 @@ function evaluateTriggeredBadges(participant, streak, info, ownedBadgeKeys = [])
     allParticipants: info.participants,
     info: info,
     ownedBadgeKeys: ownedBadgeKeys,
+    totalTimeDead: totalTimeDead,
+    oldTier: oldTier,
+    newTier: newTier,
   };
 
   return BADGES.filter((badge) => badge.trigger(context));
