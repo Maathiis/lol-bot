@@ -15,6 +15,12 @@ function ensureSchema() {
   try {
     db.exec("ALTER TABLE monthly_losses ADD COLUMN games INTEGER DEFAULT 0");
   } catch (e) {}
+  try {
+    db.exec("ALTER TABLE players ADD COLUMN last_match_at INTEGER DEFAULT 0");
+  } catch (e) {}
+  try {
+    db.exec("ALTER TABLE players ADD COLUMN last_checked_at INTEGER DEFAULT 0");
+  } catch (e) {}
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS monthly_losses (

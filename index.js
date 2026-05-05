@@ -41,7 +41,7 @@ client.once("ready", async () => {
   const commandsData = client.commands.map((c) => c.data.toJSON());
   await client.application.commands.set(commandsData);
 
-  setInterval(() => checkMatches(client), 120000);
+  setInterval(() => checkMatches(client), 60000);
 
   // Vérification horaire pour l'annonce mensuelle
   setInterval(

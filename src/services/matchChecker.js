@@ -89,7 +89,9 @@ async function formatBadgeAnnouncement(client, player, unlockedBadges) {
   let discordLabel = `**${player.game_name}**`;
   if (player.discord_user_id) {
     try {
-      const user = client.users.cache.get(player.discord_user_id) || await client.users.fetch(player.discord_user_id);
+      const user =
+        client.users.cache.get(player.discord_user_id) ||
+        (await client.users.fetch(player.discord_user_id));
       discordLabel = `**${user.globalName || user.username}**`;
     } catch {
       // fallback
@@ -123,29 +125,77 @@ async function formatBadgeAnnouncement(client, player, unlockedBadges) {
 
 async function checkMatches(client) {
   const players = db.prepare("SELECT * FROM players").all();
-  console.log(
-    `🚀 Lancement de la vérification pour ${players.length} joueurs...`,
-  );
+  const now = Date.now();
 
   for (const player of players) {
     try {
+      // --- LOGIQUE D'INTERVALLE ADAPTATIF ---
+      const lastMatchAt = player.last_match_at || 0;
+      const lastCheckedAt = player.last_checked_at || 0;
+      const timeSinceLastMatch = now - lastMatchAt;
+      const timeSinceLastCheck = now - lastCheckedAt;
+
+      let interval = 2 * 60 * 1000; // Par défaut 2 min
+      if (lastMatchAt > 0) {
+        if (timeSinceLastMatch > 24 * 60 * 60 * 1000) {
+          interval = 30 * 60 * 1000; // > 24h : 30 min
+        } else if (timeSinceLastMatch > 2 * 60 * 60 * 1000) {
+          interval = 15 * 60 * 1000; // > 2h : 15 min
+        }
+      }
+
+      if (timeSinceLastCheck < interval) continue;
+
+      // Mise à jour du timestamp de vérification
+      db.prepare("UPDATE players SET last_checked_at = ? WHERE puuid = ?").run(
+        now,
+        player.puuid,
+      );
+
       console.log(`⏳ Vérification : ${player.game_name}`);
       const axiosConfig = { headers: { "X-Riot-Token": RIOT_API_KEY } };
-      const lolMatchUrl = `https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/${player.puuid}/ids?count=1`;
 
+      // On récupère les 5 derniers matchs pour être sûr de ne rien rater
+      const lolMatchUrl = `https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/${player.puuid}/ids?count=2`;
       const lolRes = await axios.get(lolMatchUrl, axiosConfig);
-      const lastId = lolRes.data ? lolRes.data[0] : null;
+      const matchIds = lolRes.data || [];
 
-      if (lastId && lastId !== player.last_match_id) {
-        db.prepare("UPDATE players SET last_match_id = ? WHERE puuid = ?").run(
-          lastId,
+      // Identifier les nouveaux matchs
+      let newMatchIds = [];
+      if (player.last_match_id) {
+        const lastIndex = matchIds.indexOf(player.last_match_id);
+        if (lastIndex === -1) {
+          // Soit c'est le premier match, soit il a joué plus de 5 parties depuis le dernier check
+          newMatchIds = matchIds;
+        } else {
+          // On ne prend que ce qui est plus récent que last_match_id
+          newMatchIds = matchIds.slice(0, lastIndex);
+        }
+      } else if (matchIds.length > 0) {
+        // Premier lancement pour ce joueur
+        db.prepare(
+          "UPDATE players SET last_match_id = ?, last_match_at = ? WHERE puuid = ?",
+        ).run(
+          matchIds[0],
+          now, // On initialise avec maintenant pour éviter de remonter tout l'historique
           player.puuid,
         );
+        continue;
+      }
 
-        const detailUrl = `https://europe.api.riotgames.com/lol/match/v5/matches/${lastId}`;
+      // On traite du plus VIEUX au plus RÉCENT
+      newMatchIds.reverse();
+
+      for (const matchId of newMatchIds) {
+        const detailUrl = `https://europe.api.riotgames.com/lol/match/v5/matches/${matchId}`;
         const detRes = await axios.get(detailUrl, axiosConfig);
         const info = detRes.data.info;
         const p = info.participants.find((part) => part.puuid === player.puuid);
+
+        // Mise à jour immédiate du dernier match traité
+        db.prepare(
+          "UPDATE players SET last_match_id = ?, last_match_at = ? WHERE puuid = ?",
+        ).run(matchId, info.gameEndTimestamp, player.puuid);
 
         if (!p || info.gameDuration <= 300) continue;
 
@@ -198,8 +248,6 @@ async function checkMatches(client) {
             if (chan) await chan.send(message);
           }
         }
-      } else {
-        console.log(`✅ [${player.game_name}] Aucun nouveau match.`);
       }
     } catch (e) {
       console.error(`❌ Erreur ${player.game_name}: ${e.message}`);
