@@ -6,28 +6,72 @@ module.exports = {
     .setName("badge-remove")
     .setDescription("Retirer un badge manuellement (Admin)")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addStringOption(opt => opt.setName("joueur").setDescription("Joueur").setRequired(true).setAutocomplete(true))
-    .addStringOption(opt => opt.setName("badge").setDescription("Clé du badge").setRequired(true).setAutocomplete(true))
-    .addStringOption(opt => opt.setName("cible").setDescription("Cible").setRequired(true).addChoices({name: "Compte Discord", value: "discord"}, {name: "Compte LoL", value: "lol"})),
+    .addSubcommand((sub) =>
+      sub
+        .setName("discord")
+        .setDescription("Retirer un badge d'un compte Discord")
+        .addUserOption((opt) =>
+          opt.setName("utilisateur").setDescription("Utilisateur Discord").setRequired(true),
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName("badge")
+            .setDescription("Clé du badge")
+            .setRequired(true)
+            .setAutocomplete(true),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("lol")
+        .setDescription("Retirer un badge d'un compte LoL")
+        .addStringOption((opt) =>
+          opt
+            .setName("joueur")
+            .setDescription("Compte LoL")
+            .setRequired(true)
+            .setAutocomplete(true),
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName("badge")
+            .setDescription("Clé du badge")
+            .setRequired(true)
+            .setAutocomplete(true),
+        ),
+    ),
   async execute(interaction) {
-    const puuid = interaction.options.getString("joueur");
+    const subcommand = interaction.options.getSubcommand();
     const badgeKey = interaction.options.getString("badge");
-    const cible = interaction.options.getString("cible");
 
-    const player = db.prepare("SELECT game_name, tag_line, discord_user_id, puuid FROM players WHERE puuid = ?").get(puuid);
-    if (!player) return interaction.reply({ content: "❌ Joueur introuvable.", ephemeral: true });
-
-    let entityId;
-    if (cible === "discord") {
-      if (!player.discord_user_id) return interaction.reply({ content: `❌ Le joueur **${player.game_name}#${player.tag_line}** n'a pas de compte Discord lié.`, ephemeral: true });
-      entityId = player.discord_user_id;
-    } else {
+    let entityId, label;
+    if (subcommand === "discord") {
+      const discordUser = interaction.options.getUser("utilisateur");
+      entityId = discordUser.id;
+      label = `l'utilisateur Discord **${discordUser.displayName || discordUser.username}**`;
+    } else if (subcommand === "lol") {
+      const lolUser = interaction.options.getString("joueur");
+      const player = db
+        .prepare("SELECT puuid, game_name, tag_line FROM players WHERE puuid = ?")
+        .get(lolUser);
+      if (!player)
+        return interaction.reply({
+          content: "❌ Joueur introuvable.",
+          ephemeral: true,
+        });
       entityId = player.puuid;
+      label = `le compte LoL **${player.game_name}#${player.tag_line}**`;
     }
-    
-    const result = db.prepare("DELETE FROM entity_badges WHERE entity_id = ? AND badge_key = ?").run(entityId, badgeKey);
 
-    if (result.changes === 0) return interaction.reply({ content: `❌ L'entité liée n'a pas le badge **${badgeKey}**.`, ephemeral: true });
-    await interaction.reply(`✅ Badge **${badgeKey}** retiré.`);
-  }
+    const result = db
+      .prepare("DELETE FROM entity_badges WHERE entity_id = ? AND badge_key = ?")
+      .run(entityId, badgeKey);
+
+    if (result.changes === 0)
+      return interaction.reply({
+        content: `❌ **${label}** n'a pas le badge **${badgeKey}**.`,
+        ephemeral: true,
+      });
+    await interaction.reply(`✅ Badge **${badgeKey}** retiré de ${label}.`);
+  },
 };

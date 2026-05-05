@@ -5,18 +5,26 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName("stats")
     .setDescription("Afficher les statistiques globales")
-    .addUserOption(opt => opt.setName("discord").setDescription("Utilisateur Discord").setRequired(false))
-    .addStringOption(opt => opt.setName("lol").setDescription("Compte LoL").setRequired(false).setAutocomplete(true)),
+    .addSubcommand((sub) =>
+      sub
+        .setName("discord")
+        .setDescription("Afficher les statistiques d'un utilisateur Discord")
+        .addUserOption((opt) => opt.setName("utilisateur").setDescription("Utilisateur Discord").setRequired(true))
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("lol")
+        .setDescription("Afficher les statistiques d'un compte LoL")
+        .addStringOption((opt) => opt.setName("joueur").setDescription("Compte LoL").setRequired(true).setAutocomplete(true))
+    ),
   async execute(interaction) {
-    const discordUser = interaction.options.getUser("discord");
-    const lolUser = interaction.options.getString("lol");
-
-    if (!discordUser && !lolUser) return interaction.reply({ content: "❌ Veuillez spécifier un utilisateur Discord ou un compte LoL.", ephemeral: true });
+    const subcommand = interaction.options.getSubcommand();
 
     const monthStr = new Date().toISOString().slice(0, 7);
     let title = "", totalLosses = 0, maxStreak = 0, currentStreak = 0, monthlyLosses = 0, monthlyGames = 0, badgesCount = 0;
 
-    if (discordUser) {
+    if (subcommand === "discord") {
+      const discordUser = interaction.options.getUser("utilisateur");
       title = `📊 Statistiques globales de ${discordUser.displayName || discordUser.username}`;
       const stats = db.prepare("SELECT SUM(total_losses) as t_losses, MAX(max_loss_streak) as m_streak, SUM(loss_streak) as c_streak FROM players WHERE discord_user_id = ?").get(discordUser.id);
       const mStats = db.prepare("SELECT SUM(losses) as m_losses, SUM(games) as m_games FROM monthly_losses ml JOIN players p ON p.puuid = ml.puuid WHERE p.discord_user_id = ? AND ml.month = ?").get(discordUser.id, monthStr);
@@ -24,7 +32,8 @@ module.exports = {
 
       totalLosses = stats?.t_losses || 0; maxStreak = stats?.m_streak || 0; currentStreak = stats?.c_streak || 0;
       monthlyLosses = mStats?.m_losses || 0; monthlyGames = mStats?.m_games || 0; badgesCount = bStats?.b_count || 0;
-    } else {
+    } else if (subcommand === "lol") {
+      const lolUser = interaction.options.getString("joueur");
       const player = db.prepare("SELECT puuid, game_name, tag_line, total_losses, max_loss_streak, loss_streak FROM players WHERE puuid = ? OR game_name = ?").get(lolUser, lolUser);
       if (!player) return interaction.reply({ content: "❌ Joueur introuvable.", ephemeral: true });
       title = `📊 Statistiques de **${player.game_name}#${player.tag_line}**`;

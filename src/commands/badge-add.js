@@ -8,32 +8,76 @@ module.exports = {
     .setName("badge-add")
     .setDescription("Donner un badge manuellement (Admin)")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addStringOption(opt => opt.setName("joueur").setDescription("Joueur").setRequired(true).setAutocomplete(true))
-    .addStringOption(opt => opt.setName("badge").setDescription("Clé du badge").setRequired(true).setAutocomplete(true))
-    .addStringOption(opt => opt.setName("cible").setDescription("Cible").setRequired(true).addChoices({name: "Compte Discord", value: "discord"}, {name: "Compte LoL", value: "lol"})),
+    .addSubcommand((sub) =>
+      sub
+        .setName("discord")
+        .setDescription("Ajouter un badge à un compte Discord")
+        .addUserOption((opt) =>
+          opt.setName("utilisateur").setDescription("Utilisateur Discord").setRequired(true),
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName("badge")
+            .setDescription("Clé du badge")
+            .setRequired(true)
+            .setAutocomplete(true),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("lol")
+        .setDescription("Ajouter un badge à un compte LoL")
+        .addStringOption((opt) =>
+          opt
+            .setName("joueur")
+            .setDescription("Compte LoL")
+            .setRequired(true)
+            .setAutocomplete(true),
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName("badge")
+            .setDescription("Clé du badge")
+            .setRequired(true)
+            .setAutocomplete(true),
+        ),
+    ),
   async execute(interaction) {
-    const puuidArg = interaction.options.getString("joueur");
+    const subcommand = interaction.options.getSubcommand();
     const badgeKey = interaction.options.getString("badge");
-    const cible = interaction.options.getString("cible");
-
-    const player = db.prepare("SELECT puuid, game_name, tag_line, discord_user_id FROM players WHERE puuid = ?").get(puuidArg);
-    if (!player) return interaction.reply({ content: "❌ Joueur introuvable.", ephemeral: true });
 
     const badge = BADGES.find((b) => b.key === badgeKey);
-    if (!badge) return interaction.reply({ content: `❌ Le badge **${badgeKey}** n'existe pas.`, ephemeral: true });
+    if (!badge)
+      return interaction.reply({
+        content: `❌ Le badge **${badgeKey}** n'existe pas.`,
+        ephemeral: true,
+      });
 
-    let entityId, isDiscord;
-    if (cible === "discord") {
-      if (!player.discord_user_id) return interaction.reply({ content: `❌ Le joueur **${player.game_name}#${player.tag_line}** n'a pas de compte Discord lié.`, ephemeral: true });
-      entityId = player.discord_user_id;
+    let entityId, isDiscord, label;
+    if (subcommand === "discord") {
+      const discordUser = interaction.options.getUser("utilisateur");
+      entityId = discordUser.id;
       isDiscord = 1;
-    } else {
+      label = `l'utilisateur Discord **${discordUser.displayName || discordUser.username}**`;
+    } else if (subcommand === "lol") {
+      const lolUser = interaction.options.getString("joueur");
+      const player = db
+        .prepare("SELECT puuid, game_name, tag_line FROM players WHERE puuid = ?")
+        .get(lolUser);
+      if (!player)
+        return interaction.reply({
+          content: "❌ Joueur introuvable.",
+          ephemeral: true,
+        });
       entityId = player.puuid;
       isDiscord = 0;
+      label = `le compte LoL **${player.game_name}#${player.tag_line}**`;
     }
-    
+
     const unlock = registerBadgeUnlock(entityId, isDiscord, badge);
 
-    await interaction.reply(`✅ Badge **${badge.name}** ajouté à l'entité liée à **${player.game_name}#${player.tag_line}**. (Total: ${unlock.unlockCount})`);
-  }
+    await interaction.reply(
+      `✅ Badge **${badge.name}** ajouté à ${label}. (Total: ${unlock.unlockCount})`,
+    );
+  },
 };

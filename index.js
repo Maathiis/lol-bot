@@ -88,7 +88,30 @@ client.on("interactionCreate", async (interaction) => {
 
     if (focusedOption.name === "badge") {
       const { BADGES } = require("./badges");
-      const filtered = BADGES.filter(
+      let availableBadges = BADGES;
+
+      if (interaction.commandName === "badge-remove") {
+        const subcommand = interaction.options.getSubcommand(false);
+        let entityId;
+        if (subcommand === "discord") {
+          entityId = interaction.options.get("utilisateur")?.value;
+        } else if (subcommand === "lol") {
+          let lolUser = interaction.options.getString("joueur");
+          if (lolUser) {
+            const player = db.prepare("SELECT puuid FROM players WHERE puuid = ? OR game_name = ?").get(lolUser, lolUser);
+            if (player) entityId = player.puuid;
+          }
+        }
+
+        if (entityId) {
+          const ownedBadgeKeys = db.prepare("SELECT badge_key FROM entity_badges WHERE entity_id = ?").all(entityId).map(r => r.badge_key);
+          availableBadges = BADGES.filter(b => ownedBadgeKeys.includes(b.key));
+        } else {
+          availableBadges = []; // Force picking a user first
+        }
+      }
+
+      const filtered = availableBadges.filter(
         (b) =>
           b.key.toLowerCase().includes(focusedOption.value.toLowerCase()) ||
           b.name.toLowerCase().includes(focusedOption.value.toLowerCase()),
