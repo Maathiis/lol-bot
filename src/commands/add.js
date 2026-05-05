@@ -29,10 +29,10 @@ module.exports = {
         db.prepare("UPDATE accounts SET discord_user_id = ? WHERE puuid = ?").run(discordUser.id, puuid);
       }
       db.prepare(`
-        INSERT INTO guild_tracking (puuid, channel_id, guild_id) 
+        INSERT INTO guild_tracking (puuid, guild_id, channel_id) 
         VALUES (?, ?, ?) 
-        ON CONFLICT(puuid, channel_id) DO UPDATE SET guild_id = excluded.guild_id
-      `).run(puuid, interaction.channelId, interaction.guildId);
+        ON CONFLICT(puuid, guild_id) DO UPDATE SET channel_id = excluded.channel_id
+      `).run(puuid, interaction.guildId, interaction.channelId);
 
       const embed = new EmbedBuilder()
         .setTitle("✅ Joueur ajouté")

@@ -64,7 +64,19 @@ function ensureSchema() {
   try {
     const tableInfo = db.prepare("PRAGMA table_info(players)").all();
     if (tableInfo.length > 0) {
-      db.exec("INSERT OR IGNORE INTO accounts SELECT puuid, game_name, tag_line, discord_user_id, total_losses, max_loss_streak, loss_streak, total_time_spent_dead, last_match_id, last_match_at, last_checked_at FROM players");
+      // On sélectionne les colonnes qui existent, et on met des valeurs par défaut pour celles qui manquent
+      db.exec(`
+        INSERT OR IGNORE INTO accounts (
+          puuid, game_name, tag_line, discord_user_id, 
+          total_losses, max_loss_streak, loss_streak, 
+          total_time_spent_dead, last_match_id, last_match_at, last_checked_at
+        ) 
+        SELECT 
+          puuid, game_name, tag_line, discord_user_id, 
+          total_losses, max_loss_streak, loss_streak, 
+          0, last_match_id, 0, 0 
+        FROM players
+      `);
       db.exec("DROP TABLE players");
     }
   } catch (e) { console.error("Erreur migration accounts:", e.message); }
@@ -73,7 +85,12 @@ function ensureSchema() {
   try {
     const tableInfo = db.prepare("PRAGMA table_info(subscriptions)").all();
     if (tableInfo.length > 0) {
-      db.exec("INSERT OR IGNORE INTO guild_tracking (puuid, guild_id, channel_id) SELECT puuid, guild_id, channel_id FROM subscriptions");
+      // Note: l'ancienne table n'avait pas de guild_id. On ne peut pas migrer proprement.
+      // On tente si la colonne existe, sinon on ignore (l'utilisateur devra re-add pour avoir le guild_id)
+      const hasGuildId = tableInfo.some(c => c.name === "guild_id");
+      if (hasGuildId) {
+        db.exec("INSERT OR IGNORE INTO guild_tracking (puuid, guild_id, channel_id) SELECT puuid, guild_id, channel_id FROM subscriptions");
+      }
       db.exec("DROP TABLE subscriptions");
     }
   } catch (e) { console.error("Erreur migration guild_tracking:", e.message); }
@@ -82,7 +99,7 @@ function ensureSchema() {
   try {
     const tableInfo = db.prepare("PRAGMA table_info(monthly_losses)").all();
     if (tableInfo.length > 0) {
-      db.exec("INSERT OR IGNORE INTO monthly_stats SELECT * FROM monthly_losses");
+      db.exec("INSERT OR IGNORE INTO monthly_stats (puuid, month, losses) SELECT puuid, month, losses FROM monthly_losses");
       db.exec("DROP TABLE monthly_losses");
     }
   } catch (e) { console.error("Erreur migration monthly_stats:", e.message); }
@@ -91,7 +108,7 @@ function ensureSchema() {
   try {
     const tableInfo = db.prepare("PRAGMA table_info(entity_badges)").all();
     if (tableInfo.length > 0) {
-      db.exec("INSERT OR IGNORE INTO badges SELECT * FROM entity_badges");
+      db.exec("INSERT OR IGNORE INTO badges (entity_id, is_discord, badge_key, first_unlocked_at, last_unlocked_at, unlock_count) SELECT entity_id, is_discord, badge_key, first_unlocked_at, last_unlocked_at, unlock_count FROM entity_badges");
       db.exec("DROP TABLE entity_badges");
     }
   } catch (e) { console.error("Erreur migration badges:", e.message); }
