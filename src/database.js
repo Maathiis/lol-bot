@@ -101,12 +101,15 @@ function ensureSchema() {
     const subsTable = db.prepare("PRAGMA table_info(subscriptions)").all();
     if (subsTable.length > 0) {
       const cols = subsTable.map(c => c.name);
+      let result;
       if (cols.includes("guild_id")) {
-        const result = db.prepare("INSERT OR IGNORE INTO guild_tracking (puuid, guild_id, channel_id) SELECT puuid, guild_id, channel_id FROM subscriptions").run();
-        console.log(`📊 Migration : ${result.changes} suivis transférés vers 'guild_tracking'.`);
+        result = db.prepare("INSERT OR IGNORE INTO guild_tracking (puuid, guild_id, channel_id) SELECT puuid, guild_id, channel_id FROM subscriptions").run();
       } else {
-        console.log("⚠️ Migration guild_tracking : 'guild_id' manquant dans l'ancienne table. Les liens serveur doivent être refaits via /add.");
+        // Utilisation du Guild ID fourni par l'utilisateur comme valeur par défaut pour la migration
+        result = db.prepare("INSERT OR IGNORE INTO guild_tracking (puuid, guild_id, channel_id) SELECT puuid, '882374360269197342', channel_id FROM subscriptions").run();
+        console.log("ℹ️ Migration guild_tracking : Utilisation du Guild ID par défaut '882374360269197342'.");
       }
+      console.log(`📊 Migration : ${result.changes} suivis transférés vers 'guild_tracking'.`);
       db.exec("DROP TABLE subscriptions");
     }
   } catch (e) { console.error("❌ Erreur migration guild_tracking:", e.message); }
