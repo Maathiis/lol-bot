@@ -28,7 +28,11 @@ module.exports = {
       if (discordUser) {
         db.prepare("UPDATE players SET discord_user_id = ? WHERE puuid = ?").run(discordUser.id, puuid);
       }
-      db.prepare("INSERT OR IGNORE INTO subscriptions (puuid, channel_id) VALUES (?, ?)").run(puuid, interaction.channelId);
+      db.prepare(`
+        INSERT INTO subscriptions (puuid, channel_id, guild_id) 
+        VALUES (?, ?, ?) 
+        ON CONFLICT(puuid, channel_id) DO UPDATE SET guild_id = excluded.guild_id
+      `).run(puuid, interaction.channelId, interaction.guildId);
 
       await interaction.editReply(discordUser ? `✅ **${gameName}#${tagLine}** est sous surveillance ici, lié à ${discordUser}.` : `✅ **${gameName}#${tagLine}** est maintenant sous surveillance ici.`);
     } catch (e) {

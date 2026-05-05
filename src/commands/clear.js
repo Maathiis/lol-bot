@@ -12,8 +12,8 @@ module.exports = {
     const backupName = `data/database_backup_clear_${Date.now()}.db`;
     fs.copyFileSync("data/database.db", backupName);
 
-    const result = db.prepare("DELETE FROM subscriptions WHERE channel_id = ?").run(interaction.channelId);
+    const result = db.prepare("DELETE FROM subscriptions WHERE guild_id = ?").run(interaction.guildId);
     db.prepare("DELETE FROM players WHERE puuid NOT IN (SELECT DISTINCT puuid FROM subscriptions)").run();
-    await interaction.reply(result.changes > 0 ? `🗑️ **${result.changes}** joueur(s) retiré(s) de la surveillance dans ce salon.\n*(Une sauvegarde de sécurité a été créée en interne : \`${backupName}\`)*` : "❌ Aucun joueur n'est suivi dans ce salon.");
+    await interaction.reply(result.changes > 0 ? `🗑️ **${result.changes}** joueur(s) retiré(s) de la surveillance sur ce serveur.\n*(Une sauvegarde de sécurité a été créée en interne : \`${backupName}\`)*` : "❌ Aucun joueur n'est suivi sur ce serveur.");
   }
 };

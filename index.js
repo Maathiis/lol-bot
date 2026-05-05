@@ -74,9 +74,9 @@ client.on("interactionCreate", async (interaction) => {
     ) {
       const players = db
         .prepare(
-          "SELECT game_name, tag_line, puuid FROM players WHERE game_name LIKE ? OR (game_name || '#' || tag_line) LIKE ?",
+          "SELECT DISTINCT p.game_name, p.tag_line, p.puuid FROM players p JOIN subscriptions s ON p.puuid = s.puuid WHERE (p.game_name LIKE ? OR (p.game_name || '#' || p.tag_line) LIKE ?) AND s.guild_id = ?",
         )
-        .all(`${focusedOption.value}%`, `%${focusedOption.value}%`)
+        .all(`${focusedOption.value}%`, `%${focusedOption.value}%`, interaction.guildId)
         .slice(0, 25);
       await interaction.respond(
         players.map((p) => ({

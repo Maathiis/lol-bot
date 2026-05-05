@@ -21,6 +21,9 @@ function ensureSchema() {
   try {
     db.exec("ALTER TABLE players ADD COLUMN last_checked_at INTEGER DEFAULT 0");
   } catch (e) {}
+  try {
+    db.exec("ALTER TABLE subscriptions ADD COLUMN guild_id TEXT");
+  } catch (e) {}
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS monthly_losses (
@@ -39,6 +42,13 @@ function ensureSchema() {
       last_unlocked_at TEXT NOT NULL,
       unlock_count INTEGER NOT NULL DEFAULT 1,
       PRIMARY KEY (entity_id, badge_key)
+    );
+
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      puuid TEXT,
+      channel_id TEXT,
+      guild_id TEXT,
+      PRIMARY KEY (puuid, channel_id)
     );
   `);
 }

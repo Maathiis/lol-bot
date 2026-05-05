@@ -10,7 +10,12 @@ module.exports = {
   async execute(interaction) {
     await interaction.deferReply();
 
-    const players = db.prepare("SELECT puuid, game_name, tag_line, discord_user_id, loss_streak FROM players").all();
+    const players = db.prepare(`
+      SELECT DISTINCT p.puuid, p.game_name, p.tag_line, p.discord_user_id, p.loss_streak 
+      FROM players p 
+      JOIN subscriptions s ON p.puuid = s.puuid 
+      WHERE s.guild_id = ?
+    `).all(interaction.guildId);
     if (players.length === 0) {
       return interaction.editReply("❌ Aucun joueur n'est surveillé.");
     }

@@ -13,7 +13,7 @@ module.exports = {
 
     if (!player) return interaction.reply({ content: `❌ Le joueur **${identifiant}** n'est pas dans la base de données.`, ephemeral: true });
 
-    const result = db.prepare("DELETE FROM subscriptions WHERE channel_id = ? AND puuid = ?").run(interaction.channelId, player.puuid);
+    const result = db.prepare("DELETE FROM subscriptions WHERE guild_id = ? AND puuid = ?").run(interaction.guildId, player.puuid);
     if (result.changes === 0) return interaction.reply({ content: `❌ Le joueur **${player.game_name}#${player.tag_line}** n'est pas suivi dans ce canal.`, ephemeral: true });
 
     db.prepare("DELETE FROM players WHERE puuid NOT IN (SELECT DISTINCT puuid FROM subscriptions)").run();
