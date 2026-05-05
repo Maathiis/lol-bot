@@ -225,7 +225,7 @@ async function checkMatches(client) {
           const triggeredBadges = evaluateTriggeredBadges(
             p,
             activeStreak,
-            info.gameDuration,
+            info,
           );
           const unlockedBadges = [];
           const entityId = player.discord_user_id || player.puuid;
