@@ -58,60 +58,78 @@ function ensureSchema() {
     );
   `);
 
-  // --- MIGRATIONS ET NETTOYAGE ---
+  // --- MIGRATIONS ET NETTOYAGE SÉCURISÉ ---
   
   // Migration de players -> accounts
   try {
-    const tableInfo = db.prepare("PRAGMA table_info(players)").all();
-    if (tableInfo.length > 0) {
-      // On sélectionne les colonnes qui existent, et on met des valeurs par défaut pour celles qui manquent
-      db.exec(`
+    const playersTable = db.prepare("PRAGMA table_info(players)").all();
+    if (playersTable.length > 0) {
+      const cols = playersTable.map(c => c.name);
+      
+      // On construit dynamiquement la requête en fonction des colonnes présentes
+      const selectFields = [
+        "puuid",
+        cols.includes("game_name") ? "game_name" : "NULL",
+        cols.includes("tag_line") ? "tag_line" : "NULL",
+        cols.includes("discord_user_id") ? "discord_user_id" : "NULL",
+        cols.includes("total_losses") ? "total_losses" : "0",
+        cols.includes("max_loss_streak") ? "max_loss_streak" : "0",
+        cols.includes("loss_streak") ? "loss_streak" : "0",
+        "0 as total_time_spent_dead",
+        cols.includes("last_match_id") ? "last_match_id" : "NULL",
+        "0 as last_match_at",
+        "0 as last_checked_at",
+        "NULL as last_tier"
+      ].join(", ");
+
+      const result = db.prepare(`
         INSERT OR IGNORE INTO accounts (
           puuid, game_name, tag_line, discord_user_id, 
           total_losses, max_loss_streak, loss_streak, 
-          total_time_spent_dead, last_match_id, last_match_at, last_checked_at
+          total_time_spent_dead, last_match_id, last_match_at, last_checked_at, last_tier
         ) 
-        SELECT 
-          puuid, game_name, tag_line, discord_user_id, 
-          total_losses, max_loss_streak, loss_streak, 
-          0, last_match_id, 0, 0 
-        FROM players
-      `);
+        SELECT ${selectFields} FROM players
+      `).run();
+
+      console.log(`📊 Migration : ${result.changes} joueurs transférés de 'players' vers 'accounts'.`);
       db.exec("DROP TABLE players");
     }
-  } catch (e) { console.error("Erreur migration accounts:", e.message); }
+  } catch (e) { console.error("❌ Erreur migration accounts:", e.message); }
 
   // Migration de subscriptions -> guild_tracking
   try {
-    const tableInfo = db.prepare("PRAGMA table_info(subscriptions)").all();
-    if (tableInfo.length > 0) {
-      // Note: l'ancienne table n'avait pas de guild_id. On ne peut pas migrer proprement.
-      // On tente si la colonne existe, sinon on ignore (l'utilisateur devra re-add pour avoir le guild_id)
-      const hasGuildId = tableInfo.some(c => c.name === "guild_id");
-      if (hasGuildId) {
-        db.exec("INSERT OR IGNORE INTO guild_tracking (puuid, guild_id, channel_id) SELECT puuid, guild_id, channel_id FROM subscriptions");
+    const subsTable = db.prepare("PRAGMA table_info(subscriptions)").all();
+    if (subsTable.length > 0) {
+      const cols = subsTable.map(c => c.name);
+      if (cols.includes("guild_id")) {
+        const result = db.prepare("INSERT OR IGNORE INTO guild_tracking (puuid, guild_id, channel_id) SELECT puuid, guild_id, channel_id FROM subscriptions").run();
+        console.log(`📊 Migration : ${result.changes} suivis transférés vers 'guild_tracking'.`);
+      } else {
+        console.log("⚠️ Migration guild_tracking : 'guild_id' manquant dans l'ancienne table. Les liens serveur doivent être refaits via /add.");
       }
       db.exec("DROP TABLE subscriptions");
     }
-  } catch (e) { console.error("Erreur migration guild_tracking:", e.message); }
+  } catch (e) { console.error("❌ Erreur migration guild_tracking:", e.message); }
 
   // Migration de monthly_losses -> monthly_stats
   try {
-    const tableInfo = db.prepare("PRAGMA table_info(monthly_losses)").all();
-    if (tableInfo.length > 0) {
-      db.exec("INSERT OR IGNORE INTO monthly_stats (puuid, month, losses) SELECT puuid, month, losses FROM monthly_losses");
+    const monthlyTable = db.prepare("PRAGMA table_info(monthly_losses)").all();
+    if (monthlyTable.length > 0) {
+      const result = db.prepare("INSERT OR IGNORE INTO monthly_stats (puuid, month, losses) SELECT puuid, month, losses FROM monthly_losses").run();
+      console.log(`📊 Migration : ${result.changes} stats mensuelles transférées.`);
       db.exec("DROP TABLE monthly_losses");
     }
-  } catch (e) { console.error("Erreur migration monthly_stats:", e.message); }
+  } catch (e) { console.error("❌ Erreur migration monthly_stats:", e.message); }
 
   // Migration de entity_badges -> badges
   try {
-    const tableInfo = db.prepare("PRAGMA table_info(entity_badges)").all();
-    if (tableInfo.length > 0) {
-      db.exec("INSERT OR IGNORE INTO badges (entity_id, is_discord, badge_key, first_unlocked_at, last_unlocked_at, unlock_count) SELECT entity_id, is_discord, badge_key, first_unlocked_at, last_unlocked_at, unlock_count FROM entity_badges");
+    const badgesTable = db.prepare("PRAGMA table_info(entity_badges)").all();
+    if (badgesTable.length > 0) {
+      const result = db.prepare("INSERT OR IGNORE INTO badges (entity_id, is_discord, badge_key, first_unlocked_at, last_unlocked_at, unlock_count) SELECT entity_id, is_discord, badge_key, first_unlocked_at, last_unlocked_at, unlock_count FROM entity_badges").run();
+      console.log(`📊 Migration : ${result.changes} badges transférés.`);
       db.exec("DROP TABLE entity_badges");
     }
-  } catch (e) { console.error("Erreur migration badges:", e.message); }
+  } catch (e) { console.error("❌ Erreur migration badges:", e.message); }
 
   // Suppression de l'ancienne table obsolète player_badges
   try { db.exec("DROP TABLE IF EXISTS player_badges"); } catch (e) {}

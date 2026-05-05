@@ -1,3 +1,9 @@
+const QUEUES = {
+  SR: [400, 420, 430, 440, 490], // Normal Draft, SoloQ, Blind, Flex, Quickplay
+  ARAM: [450],
+  ARENA: [1700],
+};
+
 const BADGES = [
   // --- BRONZE ---
   {
@@ -50,6 +56,7 @@ const BADGES = [
     repeatable: true,
     trigger: ({ participant }) =>
       participant.deaths > 12 && participant.deaths < 17,
+    allowed_queues: QUEUES.SR,
   },
   {
     key: "KDA_PLAYER_BRONZE",
@@ -141,6 +148,7 @@ const BADGES = [
     repeatable: true,
     trigger: ({ participant, gameDuration }) =>
       gameDuration > 1500 && participant.visionScore < 5,
+    allowed_queues: QUEUES.SR,
   },
   {
     key: "VOLEUR",
@@ -150,6 +158,7 @@ const BADGES = [
     version: 1,
     repeatable: true,
     trigger: ({ participant }) => participant.objectivesStolen > 0,
+    allowed_queues: QUEUES.SR,
   },
   {
     key: "MINEUR_DE_FOND",
@@ -162,6 +171,7 @@ const BADGES = [
     trigger: ({ participant }) =>
       (participant.challenges?.enemyJungleMonsterKills || 0) < 2 &&
       participant.totalDamageDealtToChampions < 5000,
+    allowed_queues: QUEUES.SR,
   },
   {
     key: "GABRIEL_PERI",
@@ -173,6 +183,7 @@ const BADGES = [
     trigger: ({ participant }) =>
       (participant.challenges?.teamDamagePercentage || 0) < 0.1 &&
       (participant.challenges?.killParticipation || 0) < 0.15,
+    allowed_queues: QUEUES.SR,
   },
   {
     key: "COLLECTIONNEUR_DE_GRIS",
@@ -206,6 +217,7 @@ const BADGES = [
       opponentTeamStats.participants.some(
         (op) => (op.challenges?.epicMonsterSteals || 0) > 0,
       ),
+    allowed_queues: QUEUES.SR,
   },
   {
     key: "ARAM_BANKER",
@@ -217,6 +229,7 @@ const BADGES = [
     trigger: ({ participant, info }) =>
       info.gameMode === "ARAM" &&
       participant.goldEarned - participant.goldSpent > 3000,
+    allowed_queues: QUEUES.ARAM,
   },
   {
     key: "ARAM_SNOWBALL",
@@ -228,6 +241,7 @@ const BADGES = [
     trigger: ({ participant, info }) =>
       info.gameMode === "ARAM" &&
       (participant.challenges?.snowballHit || 0) >= 15,
+    allowed_queues: QUEUES.ARAM,
   },
 
   // --- OR ---
@@ -298,6 +312,7 @@ const BADGES = [
     trigger: ({ participant, opponentDirect }) =>
       opponentDirect &&
       participant.goldEarned - opponentDirect.goldEarned > 4000,
+    allowed_queues: QUEUES.SR,
   },
   {
     key: "TOP_GAP_HELL",
@@ -312,6 +327,7 @@ const BADGES = [
       opponentTop &&
       opponentTop.inhibitorTakedowns >= 1 &&
       opponentTop.turretTakedowns >= 3,
+    allowed_queues: QUEUES.SR,
   },
   {
     key: "LIFE_INSURANCE",
@@ -344,6 +360,7 @@ const BADGES = [
     repeatable: true,
     trigger: ({ participant, info }) =>
       info.gameMode === "ARAM" && participant.totalDamageTaken > 50000,
+    allowed_queues: QUEUES.ARAM,
   },
 
   // --- PLATINE ---
@@ -398,6 +415,7 @@ const BADGES = [
     rank: "Secret",
     repeatable: true,
     trigger: ({ participant }) => participant.turretTakedowns >= 11,
+    allowed_queues: QUEUES.SR,
   },
   {
     key: "SPEEDRUN_DEFEAT",
@@ -419,6 +437,7 @@ const BADGES = [
       gameDuration > 1800 &&
       teamStats.baronKills === 0 &&
       teamStats.dragonKills === 0,
+    allowed_queues: QUEUES.SR,
   },
   {
     key: "PACIFIST_SURE",
@@ -440,6 +459,7 @@ const BADGES = [
     repeatable: true,
     trigger: ({ teamStats, gameDuration }) =>
       gameDuration < 1200 && teamStats.inhibitorKills > 0,
+    allowed_queues: QUEUES.SR,
   },
   {
     key: "ARAM_SPEEDRUN",
@@ -449,6 +469,7 @@ const BADGES = [
     repeatable: true,
     trigger: ({ gameDuration, info }) =>
       info.gameMode === "ARAM" && gameDuration < 600,
+    allowed_queues: QUEUES.ARAM,
   },
   {
     key: "LIFETIME_DEAD_10H",
@@ -499,7 +520,12 @@ function evaluateTriggeredBadges(
     newTier: newTier,
   };
 
-  return BADGES.filter((badge) => badge.trigger(context));
+  return BADGES.filter((badge) => {
+    if (badge.allowed_queues && !badge.allowed_queues.includes(info.queueId)) {
+      return false;
+    }
+    return badge.trigger(context);
+  });
 }
 
 module.exports = {
