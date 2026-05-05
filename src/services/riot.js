@@ -52,8 +52,30 @@ async function fetchPlayerRank(puuid, queueId) {
   }
 }
 
+let championsCache = null;
+
+async function getChampionName(championId) {
+  if (!championsCache) {
+    try {
+      const vRes = await axios.get("https://ddragon.leagueoflegends.com/api/versions.json");
+      const v = vRes.data[0];
+      const cRes = await axios.get(`https://ddragon.leagueoflegends.com/cdn/${v}/data/fr_FR/champion.json`);
+      championsCache = cRes.data.data;
+    } catch (e) {
+      return "Inconnu";
+    }
+  }
+  for (const key in championsCache) {
+    if (championsCache[key].key == championId) {
+      return championsCache[key].name;
+    }
+  }
+  return "Inconnu";
+}
+
 module.exports = {
   RIOT_API_KEY,
   QUEUE_TYPES,
   fetchPlayerRank,
+  getChampionName,
 };

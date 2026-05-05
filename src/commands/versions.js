@@ -1,10 +1,9 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { SlashCommandBuilder } = require("discord.js");
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("versions")
-    .setDescription("Voir la version actuelle du bot et ses nouveautés (Admin)")
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    .setDescription("Voir la version actuelle du bot et ses nouveautés"),
   async execute(interaction) {
     const version = "1.0.0";
     const V1_0_0 = `- 🚀 Refonte complète de l'architecture du bot.
