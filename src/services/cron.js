@@ -19,11 +19,18 @@ async function announceMonthlyStats(client) {
 
   if (!rows.length) return;
 
-  let msg = `📢 **BILAN MENSUEL DES DÉFAITES (${prevMonthStr})** 📢\\n━━━━━━━━━━━━━━━━━━━━━━━━\\n`;
-  rows.forEach((r, i) => {
-    const label = r.is_discord ? `<@${r.identifier}>` : `**${r.identifier}**`;
-    msg += `${i + 1}. ${label} : **${r.total_month}** défaites\\n`;
-  });
+  let msg = `📢 **BILAN MENSUEL DES DÉFAITES (${prevMonthStr})** 📢\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    let label = `**${r.identifier}**`;
+    if (r.is_discord) {
+      try {
+        const user = client.users.cache.get(r.identifier) || await client.users.fetch(r.identifier);
+        label = `**${user.globalName || user.username}**`;
+      } catch { }
+    }
+    msg += `${i + 1}. ${label} : **${r.total_month}** défaites\n`;
+  }
   msg += "━━━━━━━━━━━━━━━━━━━━━━━━";
 
   const channels = db.prepare("SELECT DISTINCT channel_id FROM subscriptions").all();

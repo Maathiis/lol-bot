@@ -15,6 +15,11 @@ module.exports = {
     if (!player.discord_user_id) return interaction.reply({ content: `❌ Le joueur **${player.game_name}#${player.tag_line}** n'est lié à aucun compte Discord.`, ephemeral: true });
 
     db.prepare("UPDATE players SET discord_user_id = NULL WHERE puuid = ?").run(player.puuid);
-    await interaction.reply(`🔗 **${player.game_name}#${player.tag_line}** a été dissocié du compte Discord <@${player.discord_user_id}>.`);
+    let name = player.discord_user_id;
+    try {
+      const user = interaction.client.users.cache.get(player.discord_user_id) || await interaction.client.users.fetch(player.discord_user_id);
+      name = user.globalName || user.username;
+    } catch {}
+    await interaction.reply(`🔗 **${player.game_name}#${player.tag_line}** a été dissocié du compte Discord **${name}**.`);
   }
 };

@@ -12,7 +12,12 @@ module.exports = {
     for (const row of rows) {
       let nameLabel = row.entity_id;
       if (row.is_discord) {
-        nameLabel = `<@${row.entity_id}>`;
+        try {
+          const user = interaction.client.users.cache.get(row.entity_id) || await interaction.client.users.fetch(row.entity_id);
+          nameLabel = `**${user.globalName || user.username}**`;
+        } catch {
+          nameLabel = `**${row.entity_id}**`;
+        }
       } else {
         const p = db.prepare("SELECT game_name, tag_line FROM players WHERE puuid = ?").get(row.entity_id);
         if (p) nameLabel = `**${p.game_name}#${p.tag_line}**`;

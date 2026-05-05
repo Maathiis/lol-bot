@@ -83,12 +83,18 @@ function registerBadgeUnlock(entityId, isDiscord, badge) {
   return { isNew: true, unlockCount: exists.unlock_count + 1 };
 }
 
-function formatBadgeAnnouncement(player, unlockedBadges) {
+async function formatBadgeAnnouncement(client, player, unlockedBadges) {
   if (!unlockedBadges.length) return "";
 
-  const discordLabel = player.discord_user_id
-    ? `<@${player.discord_user_id}>`
-    : `**${player.game_name}**`;
+  let discordLabel = `**${player.game_name}**`;
+  if (player.discord_user_id) {
+    try {
+      const user = client.users.cache.get(player.discord_user_id) || await client.users.fetch(player.discord_user_id);
+      discordLabel = `**${user.globalName || user.username}**`;
+    } catch {
+      // fallback
+    }
+  }
 
   let announcement = "";
 
@@ -159,7 +165,7 @@ async function checkMatches(client) {
           }
 
           if (activeStreak > 1) {
-            message += `\\n🔥 Série de défaites : ${activeStreak}`;
+            message += `\n🔥 Série de défaites : ${activeStreak}`;
           }
 
           const subs = db
@@ -182,7 +188,7 @@ async function checkMatches(client) {
             }
           }
           if (unlockedBadges.length > 0) {
-            message += `\\n${formatBadgeAnnouncement(player, unlockedBadges)}`;
+            message += `\n${await formatBadgeAnnouncement(client, player, unlockedBadges)}`;
           }
 
           for (const sub of subs) {

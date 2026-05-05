@@ -14,10 +14,17 @@ module.exports = {
     if (!rows.length) return interaction.reply("🤷 Aucune défaite enregistrée ce mois-ci.");
 
     let msg = `📅 **BILAN DES DÉFAITES DU MOIS (${monthStr})** 📅\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    rows.forEach((r, i) => {
-      const label = r.is_discord ? `<@${r.identifier}>` : `**${r.identifier}**`;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      let label = `**${r.identifier}**`;
+      if (r.is_discord) {
+        try {
+          const user = interaction.client.users.cache.get(r.identifier) || await interaction.client.users.fetch(r.identifier);
+          label = `**${user.globalName || user.username}**`;
+        } catch { }
+      }
       msg += `${i + 1}. ${label} : **${r.total_month}** défaites\n`;
-    });
+    }
     msg += "━━━━━━━━━━━━━━━━━━━━━━━━";
     await interaction.reply(msg);
   }
