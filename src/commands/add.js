@@ -2,6 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require("disc
 const axios = require("axios");
 const { db } = require("../database");
 const { RIOT_API_KEY } = require("../services/riot");
+const { glyphForPuuid } = require("../accountGlyph");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -24,7 +25,13 @@ module.exports = {
       );
       const { puuid, gameName, tagLine } = accRes.data;
 
-      db.prepare("INSERT OR IGNORE INTO accounts (puuid, game_name, tag_line, discord_user_id) VALUES (?, ?, ?, ?)").run(puuid, gameName, tagLine, discordUser ? discordUser.id : null);
+      const g = glyphForPuuid(puuid);
+      db.prepare(
+        "INSERT OR IGNORE INTO accounts (puuid, game_name, tag_line, discord_user_id, glyph) VALUES (?, ?, ?, ?, ?)",
+      ).run(puuid, gameName, tagLine, discordUser ? discordUser.id : null, g);
+      db.prepare(
+        "UPDATE accounts SET glyph = COALESCE(NULLIF(TRIM(glyph), ''), ?) WHERE puuid = ?",
+      ).run(g, puuid);
       if (discordUser) {
         db.prepare("UPDATE accounts SET discord_user_id = ? WHERE puuid = ?").run(discordUser.id, puuid);
       }

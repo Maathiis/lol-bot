@@ -1,6 +1,8 @@
 const Database = require("better-sqlite3");
+const path = require("path");
 
-const db = new Database("data/database.db");
+const dbFile = process.env.DATABASE_PATH || "data/database.db";
+const db = new Database(path.isAbsolute(dbFile) ? dbFile : path.join(process.cwd(), dbFile));
 
 function ensureSchema() {
   // --- NOUVELLE STRUCTURE CLAIRE V2 ---
@@ -19,9 +21,35 @@ function ensureSchema() {
       last_match_id TEXT,
       last_match_at INTEGER DEFAULT 0,
       last_checked_at INTEGER DEFAULT 0,
-      last_tier TEXT
+      last_tier_solo TEXT,
+      last_tier_flex TEXT,
+      glyph TEXT
     );
   `);
+
+  // Glyphe décoratif par compte LoL (affichage front / Discord)
+  try {
+    const accCols = db.prepare("PRAGMA table_info(accounts)").all();
+    if (!accCols.find((c) => c.name === "glyph")) {
+      db.exec("ALTER TABLE accounts ADD COLUMN glyph TEXT");
+      console.log("✅ Migration : colonne accounts.glyph ajoutée.");
+    }
+    const { glyphForPuuid } = require("./accountGlyph");
+    const needGlyph = db
+      .prepare(
+        `SELECT puuid FROM accounts WHERE glyph IS NULL OR TRIM(COALESCE(glyph, '')) = ''`,
+      )
+      .all();
+    const upd = db.prepare("UPDATE accounts SET glyph = ? WHERE puuid = ?");
+    for (const row of needGlyph) {
+      upd.run(glyphForPuuid(row.puuid), row.puuid);
+    }
+    if (needGlyph.length > 0) {
+      console.log(`✅ Comptes : ${needGlyph.length} glyphe(s) par défaut renseigné(s).`);
+    }
+  } catch (e) {
+    console.error("❌ Migration accounts.glyph:", e.message);
+  }
 
   // Table de suivi par serveur (qui suit quel compte et où)
   db.exec(`
@@ -57,6 +85,14 @@ function ensureSchema() {
       PRIMARY KEY (entity_id, badge_key)
     );
   `);
+
+  // Catalogue des badges (métadonnées) — distinct des déblocages dans \`badges\`
+  try {
+    const { seedBadgeDefinitions } = require("./seedBadgeDefinitions");
+    seedBadgeDefinitions(db);
+  } catch (e) {
+    console.error("❌ seed badge_definitions:", e.message);
+  }
 
   // --- MIGRATIONS ET NETTOYAGE SÉCURISÉ ---
   
@@ -136,6 +172,56 @@ function ensureSchema() {
 
   // Suppression de l'ancienne table obsolète player_badges
   try { db.exec("DROP TABLE IF EXISTS player_badges"); } catch (e) {}
+
+  // Migration pour séparer SoloQ et Flex
+  try {
+    let tableInfo = db.prepare("PRAGMA table_info(accounts)").all();
+    if (!tableInfo.find((c) => c.name === "last_tier_solo")) {
+      db.exec("ALTER TABLE accounts ADD COLUMN last_tier_solo TEXT");
+      db.exec("ALTER TABLE accounts ADD COLUMN last_tier_flex TEXT");
+      console.log("✅ Migration : Colonnes last_tier_solo et last_tier_flex ajoutées.");
+    }
+    tableInfo = db.prepare("PRAGMA table_info(accounts)").all();
+    if (tableInfo.find((c) => c.name === "last_tier")) {
+      // Ancienne BDD avec une seule colonne : on ne copie que vers Solo (file inconnue pour Flex).
+      db.exec(`
+        UPDATE accounts
+        SET last_tier_solo = last_tier
+        WHERE last_tier IS NOT NULL
+          AND (last_tier_solo IS NULL OR TRIM(last_tier_solo) = '')
+      `);
+      db.exec("ALTER TABLE accounts DROP COLUMN last_tier");
+      console.log(
+        "✅ Migration : last_tier → last_tier_solo (Flex reste à jour par les parties Flex).",
+      );
+    }
+  } catch (e) {
+    console.error("❌ Erreur migration solo/flex:", e.message);
+  }
+
+  // Historique des parties (victoires + défaites ; le front n’affiche que les défaites)
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS match_history (
+        id TEXT NOT NULL,
+        puuid TEXT NOT NULL,
+        champion_name TEXT,
+        kills INTEGER DEFAULT 0,
+        deaths INTEGER DEFAULT 0,
+        assists INTEGER DEFAULT 0,
+        duration_seconds INTEGER DEFAULT 0,
+        queue_id INTEGER,
+        played_at TEXT NOT NULL,
+        win INTEGER NOT NULL DEFAULT 0,
+        badges_json TEXT,
+        PRIMARY KEY (id, puuid)
+      );
+      CREATE INDEX IF NOT EXISTS idx_match_history_puuid_played
+        ON match_history (puuid, played_at DESC);
+    `);
+  } catch (e) {
+    console.error("❌ Migration match_history:", e.message);
+  }
 }
 
 module.exports = {

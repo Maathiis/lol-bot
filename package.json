@@ -5,6 +5,8 @@
   "scripts": {
     "start": "node init_db.js && node index.js",
     "dev": "NODE_ENV=test node init_db.js && NODE_ENV=test node index.js",
+    "prep:test": "node scripts/prep-test-data.js",
+    "seed:demo": "node scripts/seed-demo-data.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

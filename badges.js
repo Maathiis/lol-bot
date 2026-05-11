@@ -22,7 +22,11 @@ const BADGES = [
     rank: "Bronze",
     version: 1,
     repeatable: true,
-    trigger: ({ oldTier, newTier }) => {
+    trigger: ({ oldTier, newTier, info }) => {
+      // Comparaison de palier uniquement sur la file ranked concernée (Solo 420 / Flex 440).
+      // Sinon on mélange des rangs de files différentes ou des parties non-classées.
+      const q = info?.queueId;
+      if (q !== 420 && q !== 440) return false;
       if (
         !oldTier ||
         !newTier ||
@@ -318,15 +322,44 @@ const BADGES = [
     key: "TOP_GAP_HELL",
     name: "Top Gap des Enfers",
     description:
-      "Perdre alors que le Top adverse a pris l'inhibiteur et 3+ tours",
+      "Perdre en top : plusieurs stats (or, dégâts, CS, vision) montrent un gros écart vs le top adverse",
     rank: "Or",
     version: 1,
     repeatable: true,
-    trigger: ({ participant, opponentTop }) =>
-      participant.teamPosition === "TOP" &&
-      opponentTop &&
-      opponentTop.inhibitorTakedowns >= 1 &&
-      opponentTop.turretTakedowns >= 3,
+    trigger: ({ participant, opponentTop }) => {
+      if (participant.teamPosition !== "TOP" || !opponentTop) {
+        return false;
+      }
+      const goldGap = opponentTop.goldEarned - participant.goldEarned;
+      const myDmg = participant.totalDamageDealtToChampions || 0;
+      const theirDmg = opponentTop.totalDamageDealtToChampions || 0;
+      const dmgAbsGap = theirDmg - myDmg;
+      const myCs =
+        (participant.totalMinionsKilled || 0) +
+        (participant.neutralMinionsKilled || 0);
+      const theirCs =
+        (opponentTop.totalMinionsKilled || 0) +
+        (opponentTop.neutralMinionsKilled || 0);
+      const csGap = theirCs - myCs;
+      const visionGap =
+        (opponentTop.visionScore || 0) - (participant.visionScore || 0);
+      const levelGap = (opponentTop.champLevel || 0) - (participant.champLevel || 0);
+
+      let score = 0;
+      if (goldGap >= 800) score += 1;
+      if (goldGap >= 1600) score += 1;
+      if (goldGap >= 2600) score += 1;
+      if (dmgAbsGap >= 2500) score += 1;
+      if (dmgAbsGap >= 5500) score += 1;
+      if (myDmg > 400 && theirDmg / myDmg >= 1.35) score += 1;
+      if (csGap >= 25) score += 1;
+      if (csGap >= 55) score += 1;
+      if (visionGap >= 12) score += 1;
+      if (visionGap >= 25) score += 1;
+      if (levelGap >= 2) score += 1;
+
+      return score >= 4;
+    },
     allowed_queues: QUEUES.SR,
   },
   {

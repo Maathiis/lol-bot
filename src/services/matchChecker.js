@@ -3,6 +3,13 @@ const { db } = require("../database");
 const { RIOT_API_KEY, QUEUE_TYPES, fetchPlayerRank } = require("./riot");
 const { evaluateTriggeredBadges } = require("../../badges");
 
+/** Colonne `accounts` pour le rang Riot : uniquement SoloQ (420) ou Flex (440). */
+function tierColumnForRankedQueue(queueId) {
+  if (queueId === 420) return "last_tier_solo";
+  if (queueId === 440) return "last_tier_flex";
+  return null;
+}
+
 function updateLossStats(player, isWin, timeSpentDead = 0) {
   const puuid = player.puuid;
   const monthStr = new Date().toISOString().slice(0, 7);
@@ -73,6 +80,38 @@ function updateLossStats(player, isWin, timeSpentDead = 0) {
       .prepare("SELECT loss_streak FROM accounts WHERE puuid = ?")
       .get(puuid);
     return row ? row.loss_streak : 0;
+  }
+}
+
+function insertMatchHistory(matchId, puuid, participant, info, win, badgeKeys) {
+  try {
+    const playedAt = new Date(info.gameEndTimestamp).toISOString();
+    const badgesJson =
+      Array.isArray(badgeKeys) && badgeKeys.length > 0
+        ? JSON.stringify(badgeKeys)
+        : null;
+    db.prepare(
+      `
+      INSERT OR REPLACE INTO match_history (
+        id, puuid, champion_name, kills, deaths, assists,
+        duration_seconds, queue_id, played_at, win, badges_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run(
+      matchId,
+      puuid,
+      participant.championName,
+      participant.kills,
+      participant.deaths,
+      participant.assists,
+      info.gameDuration,
+      info.queueId,
+      playedAt,
+      win ? 1 : 0,
+      badgesJson,
+    );
+  } catch (e) {
+    console.error("match_history:", e.message);
   }
 }
 
@@ -218,6 +257,8 @@ async function checkMatches(client) {
 
         const activeStreak = updateLossStats(player, p.win, p.totalTimeSpentDead);
 
+        let badgeKeysEarned = [];
+
         if (!p.win) {
           const queueName = QUEUE_TYPES[info.queueId] || "Partie";
           const min = Math.floor(info.gameDuration / 60);
@@ -259,8 +300,13 @@ async function checkMatches(client) {
             totalDeadConsolidated = player.total_time_spent_dead || 0;
           }
 
-          // Gestion du palier (Tier) pour le badge de rétrogradation
-          const oldTier = player.last_tier;
+          // Palier stocké par file (Solo / Flex) — jamais la même colonne pour deux files différentes
+          const tierCol = tierColumnForRankedQueue(info.queueId);
+          const oldTier =
+            tierCol && player[tierCol] != null && String(player[tierCol]).trim() !== ""
+              ? player[tierCol]
+              : null;
+
           const newTier = rankData ? rankData.tier : null;
 
           // --- BADGE EVALUATION ---
@@ -288,9 +334,15 @@ async function checkMatches(client) {
             message += `\n${await formatBadgeAnnouncement(client, player, unlockedBadges)}`;
           }
 
-          // Mise à jour du palier dans la base pour la prochaine fois
-          if (newTier) {
-            db.prepare("UPDATE accounts SET last_tier = ? WHERE puuid = ?").run(newTier, player.puuid);
+          badgeKeysEarned = unlockedBadges.map((b) => b.key);
+
+          // Mise à jour du palier pour la file de cette partie uniquement
+          if (newTier && tierCol) {
+            db.prepare(`UPDATE accounts SET ${tierCol} = ? WHERE puuid = ?`).run(
+              newTier,
+              player.puuid,
+            );
+            player[tierCol] = newTier;
           }
 
           for (const sub of subs) {
@@ -302,10 +354,17 @@ async function checkMatches(client) {
         } else {
           // Même en cas de victoire, on met à jour le tier pour suivre les montées/descentes
           const rankData = await fetchPlayerRank(player.puuid, info.queueId);
-          if (rankData) {
-            db.prepare("UPDATE accounts SET last_tier = ? WHERE puuid = ?").run(rankData.tier, player.puuid);
+          const winTierCol = tierColumnForRankedQueue(info.queueId);
+          if (rankData && winTierCol) {
+            db.prepare(`UPDATE accounts SET ${winTierCol} = ? WHERE puuid = ?`).run(
+              rankData.tier,
+              player.puuid,
+            );
+            player[winTierCol] = rankData.tier;
           }
         }
+
+        insertMatchHistory(matchId, player.puuid, p, info, p.win, badgeKeysEarned);
       }
     } catch (e) {
       console.error(`❌ Erreur ${player.game_name}: ${e.message}`);

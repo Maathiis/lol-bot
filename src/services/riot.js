@@ -53,6 +53,27 @@ async function fetchPlayerRank(puuid, queueId) {
 }
 
 let championsCache = null;
+let ddragonVersionCache = null;
+
+/**
+ * Version Data Dragon courante (CDN images, pas l'API Riot Games).
+ * @see https://developer.riotgames.com/docs/lol#data-dragon
+ */
+async function getDdragonVersion() {
+  if (ddragonVersionCache) return ddragonVersionCache;
+  const vRes = await axios.get(
+    "https://ddragon.leagueoflegends.com/api/versions.json",
+  );
+  ddragonVersionCache = vRes.data[0];
+  return ddragonVersionCache;
+}
+
+/** Icône champion : `championName` = champ retourné par Match-V5 (`participant.championName`, ex. "MissFortune"). */
+async function championSquareImgUrl(championName) {
+  if (!championName) return null;
+  const v = await getDdragonVersion();
+  return `https://ddragon.leagueoflegends.com/cdn/${v}/img/champion/${championName}.png`;
+}
 
 async function getChampionName(championId) {
   if (!championsCache) {
@@ -78,4 +99,6 @@ module.exports = {
   QUEUE_TYPES,
   fetchPlayerRank,
   getChampionName,
+  getDdragonVersion,
+  championSquareImgUrl,
 };
