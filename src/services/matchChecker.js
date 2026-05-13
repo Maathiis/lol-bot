@@ -2,6 +2,10 @@ const axios = require("axios");
 const { db } = require("../database");
 const { RIOT_API_KEY, QUEUE_TYPES, fetchPlayerRank } = require("./riot");
 const { evaluateTriggeredBadges } = require("../../badges");
+const { recordNotification } = require("./notifications");
+
+/** Paliers de série de défaites à journaliser (kind = 'streak'). */
+const STREAK_MILESTONES = new Set([3, 5, 10, 15]);
 
 /** Colonne `accounts` pour le rang Riot : uniquement SoloQ (420) ou Flex (440). */
 function tierColumnForRankedQueue(queueId) {
@@ -94,8 +98,8 @@ function insertMatchHistory(matchId, puuid, participant, info, win, badgeKeys) {
       `
       INSERT OR REPLACE INTO match_history (
         id, puuid, champion_name, kills, deaths, assists,
-        duration_seconds, queue_id, played_at, win, badges_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        duration_seconds, queue_id, played_at, win, badges_json, time_spent_dead_seconds
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     ).run(
       matchId,
@@ -109,6 +113,7 @@ function insertMatchHistory(matchId, puuid, participant, info, win, badgeKeys) {
       playedAt,
       win ? 1 : 0,
       badgesJson,
+      typeof participant.totalTimeSpentDead === "number" ? participant.totalTimeSpentDead : 0,
     );
   } catch (e) {
     console.error("match_history:", e.message);
@@ -350,6 +355,55 @@ async function checkMatches(client) {
               .fetch(sub.channel_id)
               .catch(() => null);
             if (chan) await chan.send(message);
+          }
+
+          // Journal : on duplique l'événement en notifications distinctes pour
+          // que la page Logs puisse les filtrer par type. La défaite garde le
+          // message complet ; chaque badge et chaque palier de streak vit en
+          // entrée séparée pour rester lisible côté UI.
+          const ts = info.gameEndTimestamp || Date.now();
+          recordNotification({
+            ts,
+            kind: "loss",
+            accountPuuid: player.puuid,
+            message: `🚨 [${queueName}] - ${player.game_name} a perdu avec ${p.championName} (${p.kills}/${p.deaths}/${p.assists}) en ${min}:${sec} min.${rankData ? ` - ${rankData.tier} ${rankData.rank} — ${rankData.lp} LP` : ""}`,
+            details: {
+              queueLabel: queueName,
+              accountName: player.game_name,
+              champion: p.championName,
+              kills: p.kills,
+              deaths: p.deaths,
+              assists: p.assists,
+              durationSeconds: info.gameDuration,
+              tier: rankData ? `${rankData.tier} ${rankData.rank}` : null,
+              lp: rankData ? rankData.lp : null,
+              streak: activeStreak,
+            },
+          });
+
+          for (const badge of unlockedBadges) {
+            recordNotification({
+              ts: ts + 1,
+              kind: "badge",
+              accountPuuid: player.puuid,
+              message: `✨ ${player.game_name} vient de débloquer le badge « ${badge.name} ».`,
+              details: {
+                accountName: player.game_name,
+                badgeKey: badge.key,
+                badgeName: badge.name,
+                badgeRank: badge.rank,
+              },
+            });
+          }
+
+          if (STREAK_MILESTONES.has(activeStreak)) {
+            recordNotification({
+              ts: ts + 2,
+              kind: "streak",
+              accountPuuid: player.puuid,
+              message: `🔥 ${player.game_name} enchaîne ${activeStreak} défaites d'affilée.`,
+              details: { accountName: player.game_name, streak: activeStreak },
+            });
           }
         } else {
           // Même en cas de victoire, on met à jour le tier pour suivre les montées/descentes

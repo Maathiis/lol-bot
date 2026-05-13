@@ -75,6 +75,34 @@ async function championSquareImgUrl(championName) {
   return `https://ddragon.leagueoflegends.com/cdn/${v}/img/champion/${championName}.png`;
 }
 
+/**
+ * Récupère la partie active d’un joueur via Riot Spectator V5.
+ * Retourne `null` si le joueur n’est pas en partie (404) ou si la requête échoue.
+ *
+ * @param {string} puuid
+ * @returns {Promise<null | {
+ *   gameId: string|number,
+ *   gameQueueConfigId: number,
+ *   gameMode: string,
+ *   mapId: number,
+ *   gameStartTime: number,
+ *   participants: Array<{ puuid: string, championId: number, teamId: number, summonerName?: string, riotId?: string }>,
+ * }>}
+ */
+async function getActiveGameByPuuid(puuid) {
+  try {
+    const axiosConfig = { headers: { "X-Riot-Token": RIOT_API_KEY } };
+    const url = `https://euw1.api.riotgames.com/lol/spectator/v5/active-games/by-summoner/${puuid}`;
+    const res = await axios.get(url, axiosConfig);
+    return res.data;
+  } catch (e) {
+    if (!e.response || e.response.status !== 404) {
+      console.error(`⚠️ Spectator API (${puuid}) : ${e.message}`);
+    }
+    return null;
+  }
+}
+
 async function getChampionName(championId) {
   if (!championsCache) {
     try {
@@ -99,6 +127,7 @@ module.exports = {
   QUEUE_TYPES,
   fetchPlayerRank,
   getChampionName,
+  getActiveGameByPuuid,
   getDdragonVersion,
   championSquareImgUrl,
 };

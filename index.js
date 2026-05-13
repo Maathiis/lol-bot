@@ -6,6 +6,7 @@ require("dotenv").config({ path: envPath });
 const { Client, Collection, GatewayIntentBits } = require("discord.js");
 const { ensureSchema, db } = require("./src/database");
 const { checkMatches } = require("./src/services/matchChecker");
+const { checkLiveGames } = require("./src/services/liveChecker");
 const { announceMonthlyStats } = require("./src/services/cron");
 
 const client = new Client({
@@ -45,6 +46,14 @@ client.once("clientReady", async () => {
   console.log("✅ Bot prêt et base de données synchronisée !");
 
   setInterval(() => checkMatches(client), 60000);
+
+  // Poll Spectator V5 toutes les 90 s pour alimenter `live_games` / `live_participants`.
+  // Premier appel immédiat puis cycles réguliers ; les éventuels comptes en partie
+  // partagée ne sont sondés qu’une seule fois par cycle (voir liveChecker.js).
+  checkLiveGames().catch((e) => console.error("live tick:", e?.message || e));
+  setInterval(() => {
+    checkLiveGames().catch((e) => console.error("live tick:", e?.message || e));
+  }, 90_000);
 
   // Vérification horaire pour l'annonce mensuelle
   setInterval(

@@ -214,6 +214,7 @@ function ensureSchema() {
         played_at TEXT NOT NULL,
         win INTEGER NOT NULL DEFAULT 0,
         badges_json TEXT,
+        time_spent_dead_seconds INTEGER DEFAULT 0,
         PRIMARY KEY (id, puuid)
       );
       CREATE INDEX IF NOT EXISTS idx_match_history_puuid_played
@@ -221,6 +222,160 @@ function ensureSchema() {
     `);
   } catch (e) {
     console.error("❌ Migration match_history:", e.message);
+  }
+
+  try {
+    const cols = db.prepare(`PRAGMA table_info(match_history)`).all();
+    if (!cols.some((c) => c.name === "time_spent_dead_seconds")) {
+      db.exec(`ALTER TABLE match_history ADD COLUMN time_spent_dead_seconds INTEGER DEFAULT 0`);
+    }
+  } catch (e) {
+    console.error("❌ Migration match_history time_spent_dead_seconds:", e.message);
+  }
+
+  // Journal des notifications Discord envoyées par le bot (page « Logs »).
+  // Chaque ligne représente UN message poussé en notification (une perte, un
+  // badge débloqué, un palier de série…). On ne dérive plus rien à la volée
+  // côté front : tout ce qui est affiché vient de cette table.
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        account_puuid TEXT,
+        message TEXT NOT NULL,
+        details_json TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_notifications_ts ON notifications (ts DESC);
+      CREATE INDEX IF NOT EXISTS idx_notifications_puuid ON notifications (account_puuid);
+    `);
+
+    // Backfill initial à partir de l’historique : on remplit la table une seule
+    // fois (`notifications` vide ET `match_history` non vide) pour que la page
+    // Logs ne soit pas blanche au premier lancement.
+    const notifCount = db.prepare("SELECT COUNT(*) AS c FROM notifications").get();
+    if (notifCount && notifCount.c === 0) {
+      try {
+        const histCount = db.prepare("SELECT COUNT(*) AS c FROM match_history").get();
+        if (histCount && histCount.c > 0) {
+          const QUEUE_LABEL = {
+            420: "Ranked Solo",
+            440: "Ranked Flex",
+            450: "ARAM",
+            400: "Draft Normale",
+            490: "Quickplay",
+            480: "Swiftplay",
+            430: "Blind Pick",
+          };
+          const losses = db
+            .prepare(
+              `SELECT mh.id, mh.puuid, mh.champion_name, mh.kills, mh.deaths, mh.assists,
+                      mh.duration_seconds, mh.queue_id, mh.played_at, mh.badges_json,
+                      a.game_name, a.last_tier_solo
+               FROM match_history mh
+               JOIN accounts a ON a.puuid = mh.puuid
+               WHERE mh.win = 0
+               ORDER BY datetime(mh.played_at) ASC`,
+            )
+            .all();
+          const insertNotif = db.prepare(
+            `INSERT INTO notifications (ts, kind, account_puuid, message, details_json) VALUES (?,?,?,?,?)`,
+          );
+          const insertBadgeAt = db.prepare(
+            `INSERT INTO notifications (ts, kind, account_puuid, message, details_json) VALUES (?, 'badge', ?, ?, ?)`,
+          );
+          const tx = db.transaction(() => {
+            for (const r of losses) {
+              const ts = Date.parse(r.played_at) || Date.now();
+              const queueLabel = QUEUE_LABEL[r.queue_id] ?? "Partie";
+              const mins = Math.floor(r.duration_seconds / 60);
+              const secs = String(r.duration_seconds % 60).padStart(2, "0");
+              const tier = r.last_tier_solo?.trim() || null;
+              const tierStr = tier ? ` - ${tier}` : "";
+              const name = r.game_name || "Invocateur";
+              const message = `🚨 [${queueLabel}] - ${name} a perdu avec ${r.champion_name} (${r.kills}/${r.deaths}/${r.assists}) en ${mins}:${secs} min.${tierStr}`;
+              insertNotif.run(
+                ts,
+                "loss",
+                r.puuid,
+                message,
+                JSON.stringify({
+                  queueLabel,
+                  accountName: name,
+                  champion: r.champion_name,
+                  kills: r.kills,
+                  deaths: r.deaths,
+                  assists: r.assists,
+                  durationSeconds: r.duration_seconds,
+                  tier,
+                }),
+              );
+              if (r.badges_json) {
+                try {
+                  const keys = JSON.parse(r.badges_json);
+                  if (Array.isArray(keys)) {
+                    for (const k of keys) {
+                      const defRow = db
+                        .prepare(`SELECT name FROM badge_definitions WHERE id = ?`)
+                        .get(k);
+                      const badgeName = defRow?.name ?? k;
+                      insertBadgeAt.run(
+                        ts,
+                        r.puuid,
+                        `✨ ${name} vient de débloquer le badge « ${badgeName} ».`,
+                        JSON.stringify({ accountName: name, badgeKey: k, badgeName }),
+                      );
+                    }
+                  }
+                } catch {/* ignore */}
+              }
+            }
+          });
+          tx();
+          console.log(`📝 notifications : backfill de ${losses.length} pertes (+ badges associés).`);
+        }
+      } catch (e) {
+        console.error("❌ Backfill notifications:", e.message);
+      }
+    }
+  } catch (e) {
+    console.error("❌ Migration notifications:", e.message);
+  }
+
+  // Parties en cours observées via Riot Spectator V5
+  // - `live_games` : une ligne par partie active vue par le bot.
+  // - `live_participants` : 10 lignes par partie. Le PUUID peut appartenir à un compte
+  //   suivi (jointure `accounts`) ou à un adversaire inconnu (`is_server = 0`).
+  // Une partie est considérée « live » tant que `observed_at_ms > NOW - 5 min`.
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS live_games (
+        id TEXT PRIMARY KEY,
+        queue_id INTEGER,
+        game_mode TEXT,
+        map_id INTEGER,
+        started_at_ms INTEGER,
+        observed_at_ms INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_live_games_observed
+        ON live_games (observed_at_ms DESC);
+
+      CREATE TABLE IF NOT EXISTS live_participants (
+        game_id TEXT NOT NULL,
+        puuid TEXT NOT NULL,
+        summoner_name TEXT,
+        champion_id INTEGER,
+        champion_name TEXT,
+        team_id INTEGER NOT NULL,
+        is_server INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (game_id, puuid)
+      );
+      CREATE INDEX IF NOT EXISTS idx_live_participants_puuid
+        ON live_participants (puuid);
+    `);
+  } catch (e) {
+    console.error("❌ Migration live_games / live_participants:", e.message);
   }
 }
 

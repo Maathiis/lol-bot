@@ -2,8 +2,11 @@
  * Remplit la BDD de dev avec historique, stats mensuelles et badges
  * (clés réelles de `badge_definitions`) pour les comptes déjà présents.
  *
+ * Matchs `demo_*` répartis de **mars à mai 2026** (dates espacées, pas un seul paquet).
+ *
  * Idempotent : supprime d’abord les matchs `demo_*`, puis réécrit.
- * Peut être appelé depuis `prep-test-data.js` ou seul :
+ *
+ * Commande (depuis le dossier `lol-bot`) :
  *   npm run seed:demo
  */
 const path = require("path");
@@ -24,6 +27,12 @@ const CHAMPIONS = [
 ];
 
 const QUEUES = [420, 440, 450, 400];
+
+/** ~1er mars 2026 UTC */
+const MARCH_START_MS = Date.UTC(2026, 2, 1, 12, 0, 0);
+/** ~11 mai 2026 UTC (fin de fenêtre) */
+const MAY_END_MS = Date.UTC(2026, 4, 11, 18, 0, 0);
+const SPAN_MS = MAY_END_MS - MARCH_START_MS;
 
 function seedDemoData(db) {
   const accounts = db
@@ -56,8 +65,8 @@ function seedDemoData(db) {
   const insMatch = db.prepare(`
     INSERT OR REPLACE INTO match_history (
       id, puuid, champion_name, kills, deaths, assists,
-      duration_seconds, queue_id, played_at, win, badges_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      duration_seconds, queue_id, played_at, win, badges_json, time_spent_dead_seconds
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const upsertMonthly = db.prepare(`
@@ -73,21 +82,24 @@ function seedDemoData(db) {
       last_unlocked_at = excluded.last_unlocked_at
   `);
 
-  const anchor = Date.UTC(2026, 4, 11, 18, 0, 0);
   let matchCount = 0;
 
   accounts.forEach((acc, i) => {
     const { puuid } = acc;
-    const n = 14 + (i % 9);
+    const n = 52 + (i % 11);
     let losses = 0;
     let wins = 0;
     let deadSec = 0;
 
     for (let m = 0; m < n; m += 1) {
       const win = (m + i * 2) % 3 !== 0;
-      const id = `demo_${m}`;
-      const tOff = (m * 47 + i * 3600 * 11) % (86400000 * 40);
-      const playedAt = new Date(anchor - tOff).toISOString();
+      const id = `demo_${puuid.slice(0, 10)}_${m}`;
+      // Répartition non linéaire sur mars–mai (golden ratio + offset compte)
+      const t =
+        ((m * 0.618033988749895 + i * 0.271) % 1) * 0.92 + ((m * 17 + i * 13) % 97) / 2000;
+      const playedMs = Math.floor(MARCH_START_MS + t * SPAN_MS + (m % 19) * 3600 * 1000);
+      const playedAt = new Date(playedMs).toISOString();
+
       const k = (m * 3 + i * 5) % CHAMPIONS.length;
       const champion = CHAMPIONS[k];
       const kills = 2 + (m + i) % 9;
@@ -107,6 +119,8 @@ function seedDemoData(db) {
         badgesJson = JSON.stringify(b && a !== b ? [a, b] : [a]);
       }
 
+      const deadMatch = 40 + (m % 120) * (win ? 1 : 3);
+
       insMatch.run(
         id,
         puuid,
@@ -119,6 +133,7 @@ function seedDemoData(db) {
         playedAt,
         win ? 1 : 0,
         badgesJson,
+        deadMatch,
       );
       matchCount += 1;
       if (win) wins += 1;
@@ -127,6 +142,7 @@ function seedDemoData(db) {
 
     const maxStreak = 2 + (i % 6);
     const lossStreak = i % 4;
+    const anchor = new Date(MAY_END_MS);
     db.prepare(
       `
       UPDATE accounts SET
@@ -137,14 +153,15 @@ function seedDemoData(db) {
         last_match_at = ?
       WHERE puuid = ?
     `,
-    ).run(losses, maxStreak, lossStreak, deadSec, anchor, puuid);
+    ).run(losses, maxStreak, lossStreak, deadSec, anchor.toISOString(), puuid);
 
-    const d0 = new Date(anchor);
-    const y = d0.getUTCFullYear();
-    const mo = String(d0.getUTCMonth() + 1).padStart(2, "0");
+    const y = anchor.getUTCFullYear();
+    const mo = String(anchor.getUTCMonth() + 1).padStart(2, "0");
     const monthKey = `${y}-${mo}`;
-    const prev = new Date(Date.UTC(y, d0.getUTCMonth() - 1, 15));
+    const prev = new Date(Date.UTC(y, anchor.getUTCMonth() - 1, 15));
     const prevKey = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, "0")}`;
+    const prev2 = new Date(Date.UTC(y, anchor.getUTCMonth() - 2, 10));
+    const prev2Key = `${prev2.getUTCFullYear()}-${String(prev2.getUTCMonth() + 1).padStart(2, "0")}`;
 
     upsertMonthly.run(
       puuid,
@@ -160,13 +177,20 @@ function seedDemoData(db) {
       8 + (i % 12),
       800 + (i % 200) * 10,
     );
+    upsertMonthly.run(
+      puuid,
+      prev2Key,
+      2 + (i % 5),
+      6 + (i % 9),
+      500 + (i % 120) * 8,
+    );
 
     if (badgeKeys.length) {
       const nb = Math.min(8, 3 + (i % 5));
       for (let b = 0; b < nb; b += 1) {
         const key = badgeKeys[(i * 7 + b * 13) % badgeKeys.length];
-        const first = new Date(anchor - (b + 1) * 86400000 * 3).toISOString();
-        const last = new Date(anchor - b * 86400000).toISOString();
+        const first = new Date(MARCH_START_MS + (b + 3) * 86400000 * 4 + i * 86400000).toISOString();
+        const last = new Date(MAY_END_MS - b * 86400000 * 2).toISOString();
         const cnt = 1 + (b % 4);
         upsertBadge.run(puuid, key, first, last, cnt);
       }
@@ -174,7 +198,7 @@ function seedDemoData(db) {
   });
 
   console.log(
-    `✅ seed-demo : ${accounts.length} compte(s), ${matchCount} ligne(s) match_history (demo_*), stats + badges.`,
+    `✅ seed-demo : ${accounts.length} compte(s), ${matchCount} ligne(s) match_history (demo_*), stats mars–mai + badges.`,
   );
 }
 
