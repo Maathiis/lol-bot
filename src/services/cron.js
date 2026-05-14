@@ -1,5 +1,9 @@
 const { db } = require("../database");
 
+const SKIP_DISCORD_SEND =
+  process.env.SKIP_DISCORD_NOTIFICATIONS === "1" ||
+  process.env.SKIP_DISCORD_NOTIFICATIONS === "true";
+
 async function announceMonthlyStats(client) {
   const now = new Date();
   now.setMonth(now.getMonth() - 1);
@@ -36,7 +40,12 @@ async function announceMonthlyStats(client) {
   const channels = db.prepare("SELECT DISTINCT channel_id FROM guild_tracking").all();
   for (const c of channels) {
     const chan = await client.channels.fetch(c.channel_id).catch(() => null);
-    if (chan) await chan.send(msg);
+    if (!chan) continue;
+    if (SKIP_DISCORD_SEND) {
+      console.log("[SKIP_DISCORD_NOTIFICATIONS] Bilan mensuel non envoyé.");
+      break;
+    }
+    await chan.send(msg);
   }
 }
 

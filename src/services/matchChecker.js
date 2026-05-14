@@ -4,6 +4,11 @@ const { RIOT_API_KEY, QUEUE_TYPES, fetchPlayerRank } = require("./riot");
 const { evaluateTriggeredBadges } = require("../../badges");
 const { recordNotification } = require("./notifications");
 
+/** Si `true` ou `1` : pas d’envoi sur Discord (tests locaux / page Live sans spam). Les stats & la BDD restent mises à jour ; les `recordNotification` restent actifs pour la page Logs. */
+const SKIP_DISCORD_SEND =
+  process.env.SKIP_DISCORD_NOTIFICATIONS === "1" ||
+  process.env.SKIP_DISCORD_NOTIFICATIONS === "true";
+
 /** Paliers de série de défaites à journaliser (kind = 'streak'). */
 const STREAK_MILESTONES = new Set([3, 5, 10, 15]);
 
@@ -350,11 +355,18 @@ async function checkMatches(client) {
             player[tierCol] = newTier;
           }
 
-          for (const sub of subs) {
-            const chan = await client.channels
-              .fetch(sub.channel_id)
-              .catch(() => null);
-            if (chan) await chan.send(message);
+          if (SKIP_DISCORD_SEND) {
+            console.log(
+              `[SKIP_DISCORD_NOTIFICATIONS] Message non envoyé (${subs.length} salon(s)) :`,
+              String(message).slice(0, 160).replace(/\n/g, " ") + "…",
+            );
+          } else {
+            for (const sub of subs) {
+              const chan = await client.channels
+                .fetch(sub.channel_id)
+                .catch(() => null);
+              if (chan) await chan.send(message);
+            }
           }
 
           // Journal : on duplique l'événement en notifications distinctes pour

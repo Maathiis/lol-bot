@@ -374,6 +374,26 @@ function ensureSchema() {
       CREATE INDEX IF NOT EXISTS idx_live_participants_puuid
         ON live_participants (puuid);
     `);
+    try {
+      const cols = db.prepare(`PRAGMA table_info(live_participants)`).all();
+      const have = new Set(cols.map((c) => c.name));
+      const add = (name, sqlType) => {
+        if (!have.has(name)) {
+          db.exec(`ALTER TABLE live_participants ADD COLUMN ${name} ${sqlType}`);
+        }
+      };
+      add("spell1_id", "INTEGER");
+      add("spell2_id", "INTEGER");
+      add("kills", "INTEGER");
+      add("deaths", "INTEGER");
+      add("assists", "INTEGER");
+      add("gold", "INTEGER");
+      add("minions_killed", "INTEGER");
+      add("champion_level", "INTEGER");
+      add("riot_lane", "TEXT");
+    } catch (e2) {
+      console.error("❌ Migration live_participants (colonnes live):", e2.message);
+    }
   } catch (e) {
     console.error("❌ Migration live_games / live_participants:", e.message);
   }

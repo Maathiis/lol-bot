@@ -47,13 +47,12 @@ client.once("clientReady", async () => {
 
   setInterval(() => checkMatches(client), 60000);
 
-  // Poll Spectator V5 toutes les 90 s pour alimenter `live_games` / `live_participants`.
-  // Premier appel immédiat puis cycles réguliers ; les éventuels comptes en partie
-  // partagée ne sont sondés qu’une seule fois par cycle (voir liveChecker.js).
+  // Poll Spectator V5 toutes les 60 s pour alimenter `live_games` / `live_participants`
+  // (snapshots sorts / KDA / or si l’API les expose).
   checkLiveGames().catch((e) => console.error("live tick:", e?.message || e));
   setInterval(() => {
     checkLiveGames().catch((e) => console.error("live tick:", e?.message || e));
-  }, 90_000);
+  }, 60_000);
 
   // Vérification horaire pour l'annonce mensuelle
   setInterval(

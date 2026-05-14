@@ -5,7 +5,7 @@ const { getActiveGameByPuuid, getChampionName } = require("./riot");
 const LIVE_TTL_MS = 5 * 60 * 1000;
 
 /** Délai minimum entre deux polls Spectator pour un même PUUID (anti rate-limit). */
-const SPECTATOR_MIN_INTERVAL_MS = 90 * 1000;
+const SPECTATOR_MIN_INTERVAL_MS = 60 * 1000;
 
 const lastCheckByPuuid = new Map();
 
@@ -31,6 +31,32 @@ function upsertLiveGame(game, observedAtMs) {
   );
 }
 
+function pickInt(v) {
+  if (typeof v !== "number" || Number.isNaN(v)) return null;
+  return Math.round(v);
+}
+
+/** Champs optionnels renvoyés par Spectator (selon versions / politiques Riot). */
+function extractLiveSnapshot(p) {
+  return {
+    spell1Id: pickInt(p.spell1Id ?? p.spell1id),
+    spell2Id: pickInt(p.spell2Id ?? p.spell2id),
+    kills: pickInt(p.kills ?? p.championStats?.kills),
+    deaths: pickInt(p.deaths ?? p.championStats?.deaths),
+    assists: pickInt(p.assists ?? p.championStats?.assists),
+    gold: pickInt(p.gold ?? p.championStats?.gold),
+    minionsKilled: pickInt(
+      p.minionsKilled ?? p.championStats?.minionsKilled ?? p.totalMinionsKilled,
+    ),
+    championLevel: pickInt(p.championLevel ?? p.championStats?.championLevel),
+    riotLane:
+      (typeof p.teamPosition === "string" && p.teamPosition) ||
+      (typeof p.lane === "string" && p.lane) ||
+      (typeof p.assignedPosition === "string" && p.assignedPosition) ||
+      null,
+  };
+}
+
 async function upsertParticipants(game, serverPuuids) {
   /**
    * Réécrit en bloc les 10 participants : si un participant n’est plus dans la
@@ -40,14 +66,26 @@ async function upsertParticipants(game, serverPuuids) {
   const id = String(game.gameId);
   const stmtUpsert = db.prepare(
     `
-    INSERT INTO live_participants (game_id, puuid, summoner_name, champion_id, champion_name, team_id, is_server)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO live_participants (
+      game_id, puuid, summoner_name, champion_id, champion_name, team_id, is_server,
+      spell1_id, spell2_id, kills, deaths, assists, gold, minions_killed, champion_level, riot_lane
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(game_id, puuid) DO UPDATE SET
-      summoner_name = excluded.summoner_name,
-      champion_id   = excluded.champion_id,
-      champion_name = excluded.champion_name,
-      team_id       = excluded.team_id,
-      is_server     = excluded.is_server
+      summoner_name    = excluded.summoner_name,
+      champion_id      = excluded.champion_id,
+      champion_name    = excluded.champion_name,
+      team_id          = excluded.team_id,
+      is_server        = excluded.is_server,
+      spell1_id        = excluded.spell1_id,
+      spell2_id        = excluded.spell2_id,
+      kills            = excluded.kills,
+      deaths           = excluded.deaths,
+      assists          = excluded.assists,
+      gold             = excluded.gold,
+      minions_killed   = excluded.minions_killed,
+      champion_level   = excluded.champion_level,
+      riot_lane        = excluded.riot_lane
     `,
   );
 
@@ -58,6 +96,7 @@ async function upsertParticipants(game, serverPuuids) {
       (p.summonerName && String(p.summonerName).trim()) ||
       (p.riotId && String(p.riotId).trim()) ||
       "Invocateur";
+    const snap = extractLiveSnapshot(p);
     stmtUpsert.run(
       id,
       p.puuid,
@@ -66,6 +105,15 @@ async function upsertParticipants(game, serverPuuids) {
       championName || null,
       p.teamId,
       serverPuuids.has(p.puuid) ? 1 : 0,
+      snap.spell1Id,
+      snap.spell2Id,
+      snap.kills,
+      snap.deaths,
+      snap.assists,
+      snap.gold,
+      snap.minionsKilled,
+      snap.championLevel,
+      snap.riotLane,
     );
   }
 }
@@ -79,7 +127,7 @@ function pruneStaleGames(observedAtMs) {
 /**
  * Itère sur tous les comptes suivis, interroge Riot Spectator V5 et met à
  * jour les tables `live_games` / `live_participants`. À brancher dans le cron
- * du bot toutes les 90–120 s pour respecter les limites Riot.
+ * du bot toutes les ~60 s (voir `SPECTATOR_MIN_INTERVAL_MS`).
  */
 async function checkLiveGames() {
   const accounts = db
