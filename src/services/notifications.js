@@ -13,17 +13,18 @@ const { db } = require("../database");
  *   details?: Record<string, unknown> | null,
  * }} params
  */
-function recordNotification({ ts, kind, accountPuuid = null, message, details = null }) {
+function recordNotification({ ts, kind, accountPuuid = null, message, details = null, matchId = null }) {
   try {
     db.prepare(
-      `INSERT INTO notifications (ts, kind, account_puuid, message, details_json)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO notifications (ts, kind, account_puuid, message, details_json, match_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(
       ts ?? Date.now(),
       kind,
       accountPuuid,
       message,
       details ? JSON.stringify(details) : null,
+      matchId,
     );
   } catch (e) {
     console.error(`notifications insert (${kind}):`, e.message);

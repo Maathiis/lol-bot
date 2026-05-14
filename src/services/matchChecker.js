@@ -394,6 +394,7 @@ async function _doCheckMatches(client) {
             ts,
             kind: "loss",
             accountPuuid: player.puuid,
+            matchId,
             message: `🚨 [${queueName}] - ${player.game_name} a perdu avec ${p.championName} (${p.kills}/${p.deaths}/${p.assists}) en ${min}:${sec} min.${rankData ? ` - ${rankData.tier} ${rankData.rank} — ${rankData.lp} LP` : ""}`,
             details: {
               queueLabel: queueName,
@@ -414,6 +415,7 @@ async function _doCheckMatches(client) {
               ts: ts + 1,
               kind: "badge",
               accountPuuid: player.puuid,
+              matchId,
               message: `✨ ${player.game_name} vient de débloquer le badge « ${badge.name} ».`,
               details: {
                 accountName: player.game_name,
@@ -429,6 +431,7 @@ async function _doCheckMatches(client) {
               ts: ts + 2,
               kind: "streak",
               accountPuuid: player.puuid,
+              matchId,
               message: `🔥 ${player.game_name} enchaîne ${activeStreak} défaites d'affilée.`,
               details: { accountName: player.game_name, streak: activeStreak },
             });

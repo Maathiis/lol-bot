@@ -3,15 +3,21 @@ const path = require("path");
 const envPath = process.env.NODE_ENV === "test" ? ".env.test" : ".env";
 require("dotenv").config({ path: envPath });
 
-const { Client, Collection, GatewayIntentBits } = require("discord.js");
+const { Client, Collection, GatewayIntentBits, Partials } = require("discord.js");
 const { ensureSchema, db } = require("./src/database");
 const { checkMatches } = require("./src/services/matchChecker");
 const { checkLiveGames } = require("./src/services/liveChecker");
 const { announceMonthlyStats } = require("./src/services/cron");
 const { startMatchDetailServer } = require("./src/services/matchDetailServer");
+const { setupWallListener } = require("./src/services/wallListener");
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
 });
 
 client.commands = new Collection();
@@ -157,5 +163,7 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
 });
+
+setupWallListener(client);
 
 client.login(process.env.DISCORD_TOKEN);

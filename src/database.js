@@ -245,11 +245,21 @@ function ensureSchema() {
         kind TEXT NOT NULL,
         account_puuid TEXT,
         message TEXT NOT NULL,
-        details_json TEXT
+        details_json TEXT,
+        match_id TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_notifications_ts ON notifications (ts DESC);
       CREATE INDEX IF NOT EXISTS idx_notifications_puuid ON notifications (account_puuid);
     `);
+
+    // Migration : colonne match_id (bases existantes)
+    try {
+      const notifCols = db.prepare("PRAGMA table_info(notifications)").all();
+      if (!notifCols.find((c) => c.name === "match_id")) {
+        db.exec("ALTER TABLE notifications ADD COLUMN match_id TEXT");
+        console.log("✅ Migration : colonne notifications.match_id ajoutée.");
+      }
+    } catch (e) { console.error("❌ Migration notifications.match_id:", e.message); }
 
     // Backfill initial à partir de l’historique : on remplit la table une seule
     // fois (`notifications` vide ET `match_history` non vide) pour que la page
@@ -341,6 +351,24 @@ function ensureSchema() {
     }
   } catch (e) {
     console.error("❌ Migration notifications:", e.message);
+  }
+
+  // Mur des messages — tous les messages postés dans les salons trackés
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS wall_messages (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL,
+        author_id TEXT NOT NULL,
+        author_name TEXT NOT NULL,
+        author_avatar TEXT,
+        content TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_wall_messages_ts ON wall_messages (created_at_ms DESC);
+    `);
+  } catch (e) {
+    console.error("❌ Migration wall_messages:", e.message);
   }
 
   // Parties en cours observées via Riot Spectator V5
