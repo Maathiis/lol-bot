@@ -90,21 +90,23 @@ async function upsertParticipants(game, serverPuuids) {
   );
 
   for (const p of game.participants || []) {
-    if (!p?.puuid) continue;
+    if (!p) continue;
+    // Mode streamer : PUUID vide → ID synthétique stable (game + équipe + champion)
+    const puuid = p.puuid || `streamer_${id}_${p.teamId ?? 0}_${p.championId ?? 0}`;
     const championName = p.championId ? await getChampionName(p.championId) : null;
     const sumName =
       (p.summonerName && String(p.summonerName).trim()) ||
       (p.riotId && String(p.riotId).trim()) ||
-      "Invocateur";
+      "";
     const snap = extractLiveSnapshot(p);
     stmtUpsert.run(
       id,
-      p.puuid,
+      puuid,
       sumName,
       p.championId ?? null,
       championName || null,
       p.teamId,
-      serverPuuids.has(p.puuid) ? 1 : 0,
+      serverPuuids.has(puuid) ? 1 : 0,
       snap.spell1Id,
       snap.spell2Id,
       snap.kills,
@@ -164,8 +166,8 @@ async function checkLiveGames() {
       if (serverPuuids.has(p.puuid)) coveredPuuids.add(p.puuid);
     }
 
-    // Petit délai pour ne pas frapper l’API en rafale.
-    await new Promise((r) => setTimeout(r, 80));
+    // Délai entre appels successifs pour respecter les rate limits Riot.
+    await new Promise((r) => setTimeout(r, 600));
   }
 
   pruneStaleGames(now);

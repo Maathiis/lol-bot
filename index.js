@@ -8,6 +8,7 @@ const { ensureSchema, db } = require("./src/database");
 const { checkMatches } = require("./src/services/matchChecker");
 const { checkLiveGames } = require("./src/services/liveChecker");
 const { announceMonthlyStats } = require("./src/services/cron");
+const { startMatchDetailServer } = require("./src/services/matchDetailServer");
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
@@ -30,6 +31,9 @@ for (const file of commandFiles) {
     );
   }
 }
+
+// Serveur HTTP local pour servir les détails de parties au front Next.js
+startMatchDetailServer();
 
 client.once("clientReady", async () => {
   ensureSchema();

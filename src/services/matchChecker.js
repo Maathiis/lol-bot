@@ -9,6 +9,9 @@ const SKIP_DISCORD_SEND =
   process.env.SKIP_DISCORD_NOTIFICATIONS === "1" ||
   process.env.SKIP_DISCORD_NOTIFICATIONS === "true";
 
+/** Mutex simple : empêche deux exécutions concurrentes de checkMatches de traiter les mêmes parties en double. */
+let _checkRunning = false;
+
 /** Paliers de série de défaites à journaliser (kind = 'streak'). */
 const STREAK_MILESTONES = new Set([3, 5, 10, 15]);
 
@@ -192,6 +195,19 @@ async function formatBadgeAnnouncement(client, player, unlockedBadges) {
 }
 
 async function checkMatches(client) {
+  if (_checkRunning) {
+    console.log("⏭️  checkMatches déjà en cours — passage ignoré.");
+    return;
+  }
+  _checkRunning = true;
+  try {
+    await _doCheckMatches(client);
+  } finally {
+    _checkRunning = false;
+  }
+}
+
+async function _doCheckMatches(client) {
   const accounts = db.prepare("SELECT * FROM accounts").all();
   const now = Date.now();
 

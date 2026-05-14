@@ -89,13 +89,19 @@ async function championSquareImgUrl(championName) {
  *   participants: Array<{ puuid: string, championId: number, teamId: number, summonerName?: string, riotId?: string }>,
  * }>}
  */
-async function getActiveGameByPuuid(puuid) {
+async function getActiveGameByPuuid(puuid, retries = 2) {
+  const axiosConfig = { headers: { "X-Riot-Token": RIOT_API_KEY } };
+  const url = `https://euw1.api.riotgames.com/lol/spectator/v5/active-games/by-summoner/${puuid}`;
   try {
-    const axiosConfig = { headers: { "X-Riot-Token": RIOT_API_KEY } };
-    const url = `https://euw1.api.riotgames.com/lol/spectator/v5/active-games/by-summoner/${puuid}`;
     const res = await axios.get(url, axiosConfig);
     return res.data;
   } catch (e) {
+    if (e.response?.status === 429 && retries > 0) {
+      const retryAfter = parseInt(e.response.headers?.["retry-after"] ?? "5", 10);
+      const wait = (Number.isFinite(retryAfter) ? retryAfter : 5) * 1000;
+      await new Promise((r) => setTimeout(r, wait));
+      return getActiveGameByPuuid(puuid, retries - 1);
+    }
     if (!e.response || e.response.status !== 404) {
       console.error(`⚠️ Spectator API (${puuid}) : ${e.message}`);
     }
