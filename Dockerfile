@@ -1,18 +1,12 @@
-# Image de base Linux avec Node.js 18
-FROM node:18
-
-# Créer le répertoire de travail dans le conteneur
+FROM node:20-alpine
 WORKDIR /usr/src/app
 
-# Copier les fichiers de dépendances
+# Outils natifs pour compiler better-sqlite3
+RUN apk add --no-cache python3 make g++
+
 COPY package*.json ./
+RUN npm ci
 
-# Installer les dépendances
-# On utilise --build-from-source pour s'assurer que better-sqlite3 est compilé pour l'OS du conteneur
-RUN npm install
-
-# Copier tout le reste du code source
 COPY . .
 
-# Définir la commande de démarrage
-CMD [ "npm", "start" ]
+CMD ["npm", "start"]

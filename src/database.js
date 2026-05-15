@@ -423,6 +423,7 @@ function ensureSchema() {
       add("minions_killed", "INTEGER");
       add("champion_level", "INTEGER");
       add("riot_lane", "TEXT");
+      add("perks_json", "TEXT");
     } catch (e2) {
       console.error("❌ Migration live_participants (colonnes live):", e2.message);
     }

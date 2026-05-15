@@ -49,7 +49,7 @@ function send(res, status, body) {
   const json = JSON.stringify(body);
   res.writeHead(status, {
     "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "http://localhost:3000",
+    "Access-Control-Allow-Origin": process.env.WEB_ORIGIN ?? "http://localhost:3000",
     "Content-Length": Buffer.byteLength(json),
   });
   res.end(json);
@@ -98,8 +98,8 @@ function startMatchDetailServer() {
     send(res, 404, { error: "Not found" });
   });
 
-  server.listen(PORT, "127.0.0.1", () => {
-    console.log(`🌐 Serveur match-detail sur http://127.0.0.1:${PORT}`);
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`🌐 Serveur match-detail sur http://0.0.0.0:${PORT}`);
   });
 
   return server;

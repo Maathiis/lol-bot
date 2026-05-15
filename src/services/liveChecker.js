@@ -38,6 +38,15 @@ function pickInt(v) {
 
 /** Champs optionnels renvoyés par Spectator (selon versions / politiques Riot). */
 function extractLiveSnapshot(p) {
+  let perksJson = null;
+  if (p.perks && typeof p.perks === "object") {
+    const ids = Array.isArray(p.perks.perkIds) ? p.perks.perkIds : [];
+    perksJson = JSON.stringify({
+      perkStyle:    typeof p.perks.perkStyle    === "number" ? p.perks.perkStyle    : null,
+      perkSubStyle: typeof p.perks.perkSubStyle === "number" ? p.perks.perkSubStyle : null,
+      perkIds: ids.slice(0, 9).map(Number),
+    });
+  }
   return {
     spell1Id: pickInt(p.spell1Id ?? p.spell1id),
     spell2Id: pickInt(p.spell2Id ?? p.spell2id),
@@ -54,6 +63,7 @@ function extractLiveSnapshot(p) {
       (typeof p.lane === "string" && p.lane) ||
       (typeof p.assignedPosition === "string" && p.assignedPosition) ||
       null,
+    perksJson,
   };
 }
 
