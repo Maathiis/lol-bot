@@ -1,4 +1,5 @@
 const { db } = require("../database");
+const { getInsultResponse } = require("./insultResponder");
 
 const WALL_INSULTS = [
   // connard et variantes
@@ -68,17 +69,19 @@ function buildRegex(word) {
 
 const INSULT_REGEXES = WALL_INSULTS.map((w) => buildRegex(norm(w)));
 
-function containsBotInsult(text) {
+function containsBotInsult(text, mentionsBot = false) {
   const lower = norm(text);
-  if (!lower.includes("le bot")) return false;
+  const targetsBot = mentionsBot || lower.includes("le bot");
+  if (!targetsBot) return false;
   return INSULT_REGEXES.some((re) => re.test(lower));
 }
 
 function setupWallListener(client) {
-  client.on("messageCreate", (message) => {
+  client.on("messageCreate", async (message) => {
     if (message.author.bot) return;
     if (!message.content || !message.content.trim()) return;
-    if (!containsBotInsult(message.content)) return;
+    const mentionsBot = message.mentions.users.has(message.client.user?.id ?? "");
+    if (!containsBotInsult(message.content, mentionsBot)) return;
 
     const tracked = db
       .prepare("SELECT 1 FROM guild_tracking WHERE channel_id = ? LIMIT 1")
@@ -104,6 +107,14 @@ function setupWallListener(client) {
       );
     } catch (e) {
       console.error("wall_messages insert:", e.message);
+    }
+
+    // Réponse piquante avec stats réelles
+    try {
+      const reply = getInsultResponse(message.author.id, message.guildId);
+      await message.reply(reply);
+    } catch (e) {
+      console.error("insult reply:", e.message);
     }
   });
 }

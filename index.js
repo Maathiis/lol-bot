@@ -10,6 +10,7 @@ const { checkLiveGames } = require("./src/services/liveChecker");
 const { announceMonthlyStats } = require("./src/services/cron");
 const { startMatchDetailServer } = require("./src/services/matchDetailServer");
 const { setupWallListener } = require("./src/services/wallListener");
+const { startMockTimer } = require("./src/services/mockTimer");
 
 const client = new Client({
   intents: [
@@ -165,5 +166,6 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 setupWallListener(client);
+startMockTimer(client);
 
 client.login(process.env.DISCORD_TOKEN);
