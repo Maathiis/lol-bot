@@ -226,11 +226,15 @@ function ensureSchema() {
 
   try {
     const cols = db.prepare(`PRAGMA table_info(match_history)`).all();
-    if (!cols.some((c) => c.name === "time_spent_dead_seconds")) {
+    const have = new Set(cols.map((c) => c.name));
+    if (!have.has("time_spent_dead_seconds")) {
       db.exec(`ALTER TABLE match_history ADD COLUMN time_spent_dead_seconds INTEGER DEFAULT 0`);
     }
+    if (!have.has("team_position")) {
+      db.exec(`ALTER TABLE match_history ADD COLUMN team_position TEXT`);
+    }
   } catch (e) {
-    console.error("❌ Migration match_history time_spent_dead_seconds:", e.message);
+    console.error("❌ Migration match_history:", e.message);
   }
 
   // Journal des notifications Discord envoyées par le bot (page « Logs »).

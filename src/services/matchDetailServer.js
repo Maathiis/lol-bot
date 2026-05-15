@@ -64,18 +64,38 @@ function startMatchDetailServer() {
   const server = http.createServer(async (req, res) => {
     if (req.method !== "GET") { send(res, 405, { error: "Method not allowed" }); return; }
 
-    const match = req.url?.match(/^\/match\/([A-Z0-9]+_\d+)$/);
-    if (!match) { send(res, 404, { error: "Not found" }); return; }
-
-    const matchId = match[1];
-    try {
-      const detail = await fetchMatchDetail(matchId);
-      send(res, 200, detail);
-    } catch (e) {
-      const status = e.response?.status ?? 500;
-      console.error(`match-detail ${matchId}: ${e.message}`);
-      send(res, status, { error: e.message });
+    const matchRoute = req.url?.match(/^\/match\/([A-Z0-9]+_\d+)$/);
+    if (matchRoute) {
+      const matchId = matchRoute[1];
+      try {
+        const detail = await fetchMatchDetail(matchId);
+        send(res, 200, detail);
+      } catch (e) {
+        const status = e.response?.status ?? 500;
+        console.error(`match-detail ${matchId}: ${e.message}`);
+        send(res, status, { error: e.message });
+      }
+      return;
     }
+
+    const accountRoute = req.url?.match(/^\/account\/([^/]+)\/([^/]+)$/);
+    if (accountRoute) {
+      const gameName = decodeURIComponent(accountRoute[1]);
+      const tagLine  = decodeURIComponent(accountRoute[2]);
+      try {
+        const r = await axios.get(
+          `${REGIONAL_HOST}/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`,
+          { headers: { "X-Riot-Token": RIOT_API_KEY } },
+        );
+        send(res, 200, { puuid: r.data.puuid, gameName: r.data.gameName, tagLine: r.data.tagLine });
+      } catch (e) {
+        const status = e.response?.status ?? 500;
+        send(res, status, { error: e.response?.data?.status?.message ?? e.message });
+      }
+      return;
+    }
+
+    send(res, 404, { error: "Not found" });
   });
 
   server.listen(PORT, "127.0.0.1", () => {

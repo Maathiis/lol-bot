@@ -102,12 +102,16 @@ function insertMatchHistory(matchId, puuid, participant, info, win, badgeKeys) {
       Array.isArray(badgeKeys) && badgeKeys.length > 0
         ? JSON.stringify(badgeKeys)
         : null;
+    const teamPosition = typeof participant.teamPosition === "string" && participant.teamPosition
+      ? participant.teamPosition
+      : null;
     db.prepare(
       `
       INSERT OR REPLACE INTO match_history (
         id, puuid, champion_name, kills, deaths, assists,
-        duration_seconds, queue_id, played_at, win, badges_json, time_spent_dead_seconds
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        duration_seconds, queue_id, played_at, win, badges_json, time_spent_dead_seconds,
+        team_position
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     ).run(
       matchId,
@@ -122,6 +126,7 @@ function insertMatchHistory(matchId, puuid, participant, info, win, badgeKeys) {
       win ? 1 : 0,
       badgesJson,
       typeof participant.totalTimeSpentDead === "number" ? participant.totalTimeSpentDead : 0,
+      teamPosition,
     );
   } catch (e) {
     console.error("match_history:", e.message);
