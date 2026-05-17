@@ -430,6 +430,37 @@ function ensureSchema() {
   } catch (e) {
     console.error("❌ Migration live_games / live_participants:", e.message);
   }
+
+  // Titres des joueurs — un titre est assigné à un compte (puuid)
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS titles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        puuid TEXT NOT NULL,
+        FOREIGN KEY (puuid) REFERENCES accounts(puuid) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_titles_puuid ON titles (puuid);
+    `);
+
+    // Seed "Beta testeur" pour tous les comptes qui ne l'ont pas encore
+    const existing = db.prepare(
+      `SELECT COUNT(*) AS c FROM titles WHERE title = 'Beta testeur'`
+    ).get();
+    if (existing && existing.c === 0) {
+      const accounts = db.prepare("SELECT puuid FROM accounts").all();
+      const insert = db.prepare("INSERT INTO titles (title, puuid) VALUES ('Beta testeur', ?)");
+      const tx = db.transaction(() => {
+        for (const row of accounts) insert.run(row.puuid);
+      });
+      tx();
+      if (accounts.length > 0) {
+        console.log(`✅ Titres : titre "Beta testeur" ajouté à ${accounts.length} compte(s).`);
+      }
+    }
+  } catch (e) {
+    console.error("❌ Migration titles:", e.message);
+  }
 }
 
 module.exports = {
