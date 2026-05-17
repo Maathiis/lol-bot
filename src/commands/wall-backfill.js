@@ -22,7 +22,7 @@ module.exports = {
     const maxMessages = interaction.options.getInteger("limite") ?? 500;
 
     const tracked = db
-      .prepare("SELECT 1 FROM guild_tracking WHERE channel_id = ? LIMIT 1")
+      .prepare("SELECT 1 FROM servers WHERE channel_id = ? LIMIT 1")
       .get(interaction.channelId);
 
     if (!tracked) {

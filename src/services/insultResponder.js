@@ -24,8 +24,9 @@ function getStats(discordUserId, guildId) {
       `SELECT a.puuid, a.game_name, a.total_losses, a.loss_streak, a.max_loss_streak,
               a.last_tier_solo
        FROM accounts a
-       JOIN guild_tracking gt ON a.puuid = gt.puuid
-       WHERE gt.guild_id = ? AND a.discord_user_id = ?
+       JOIN server_members sm ON sm.puuid = a.puuid
+       JOIN servers sv ON sv.id = sm.server_id
+       WHERE sv.guild_id = ? AND a.discord_user_id = ?
        LIMIT 1`,
     )
     .get(guildId, discordUserId);

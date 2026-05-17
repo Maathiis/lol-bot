@@ -17,7 +17,8 @@ module.exports = {
         SUM(p.total_time_spent_dead) as total_dead_all_time
       FROM accounts p
       LEFT JOIN monthly_stats ms ON p.puuid = ms.puuid AND ms.month = ?
-      JOIN guild_tracking s ON p.puuid = s.puuid
+      JOIN server_members sm ON sm.puuid = p.puuid
+      JOIN servers s ON s.id = sm.server_id
       WHERE s.guild_id = ?
     `).get(monthStr, interaction.guildId);
 
@@ -25,7 +26,8 @@ module.exports = {
     const kingOfLoss = db.prepare(`
       SELECT p.game_name, p.tag_line, p.max_loss_streak, p.discord_user_id
       FROM accounts p
-      JOIN guild_tracking s ON p.puuid = s.puuid
+      JOIN server_members sm ON sm.puuid = p.puuid
+      JOIN servers s ON s.id = sm.server_id
       WHERE s.guild_id = ?
       ORDER BY p.max_loss_streak DESC
       LIMIT 1
@@ -36,7 +38,7 @@ module.exports = {
     const totalBadges = db.prepare(`
       SELECT SUM(unlock_count) as count
       FROM badges
-      WHERE entity_id IN (SELECT DISTINCT puuid FROM guild_tracking WHERE guild_id = ?)
+      WHERE entity_id IN (SELECT DISTINCT sm.puuid FROM server_members sm JOIN servers s ON s.id = sm.server_id WHERE s.guild_id = ?)
     `).get(interaction.guildId);
 
     const totalAllTime = globalStats?.total_all_time || 0;

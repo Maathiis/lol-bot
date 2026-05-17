@@ -5,7 +5,14 @@ module.exports = {
   data: new SlashCommandBuilder().setName("list").setDescription("Voir les joueurs surveillés"),
   async execute(interaction) {
     await interaction.deferReply();
-    const rows = db.prepare("SELECT p.game_name, p.tag_line, p.discord_user_id FROM accounts p JOIN guild_tracking s ON p.puuid = s.puuid WHERE s.guild_id = ? GROUP BY p.puuid").all(interaction.guildId);
+    const rows = db.prepare(`
+      SELECT p.game_name, p.tag_line, p.discord_user_id
+      FROM accounts p
+      JOIN server_members sm ON sm.puuid = p.puuid
+      JOIN servers s ON s.id = sm.server_id
+      WHERE s.guild_id = ?
+      GROUP BY p.puuid
+    `).all(interaction.guildId);
 
     if (rows.length === 0) {
       return interaction.editReply("❌ Aucun joueur n'est surveillé sur ce serveur.");

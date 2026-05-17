@@ -28,7 +28,7 @@ module.exports = {
       title = `Statistiques de ${discordUser.displayName || discordUser.username}`;
       thumbnail = discordUser.displayAvatarURL();
       
-      const isTracked = db.prepare("SELECT 1 FROM accounts p JOIN guild_tracking s ON p.puuid = s.puuid WHERE p.discord_user_id = ? AND s.guild_id = ?").get(discordUser.id, interaction.guildId);
+      const isTracked = db.prepare(`SELECT 1 FROM accounts p JOIN server_members sm ON sm.puuid = p.puuid JOIN servers s ON s.id = sm.server_id WHERE p.discord_user_id = ? AND s.guild_id = ?`).get(discordUser.id, interaction.guildId);
       if (!isTracked) return interaction.reply({ content: "❌ Cet utilisateur n'est lié à aucun compte LoL surveillé sur ce serveur.", ephemeral: true });
 
       const stats = db.prepare(`
@@ -56,9 +56,10 @@ module.exports = {
     } else if (subcommand === "lol") {
       const lolUser = interaction.options.getString("joueur");
       const player = db.prepare(`
-        SELECT p.* 
-        FROM accounts p 
-        JOIN guild_tracking s ON p.puuid = s.puuid 
+        SELECT p.*
+        FROM accounts p
+        JOIN server_members sm ON sm.puuid = p.puuid
+        JOIN servers s ON s.id = sm.server_id
         WHERE (p.puuid = ? OR p.game_name = ?) AND s.guild_id = ?
       `).get(lolUser, lolUser, interaction.guildId);
       

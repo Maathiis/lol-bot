@@ -84,7 +84,7 @@ function setupWallListener(client) {
     if (!containsBotInsult(message.content, mentionsBot)) return;
 
     const tracked = db
-      .prepare("SELECT 1 FROM guild_tracking WHERE channel_id = ? LIMIT 1")
+      .prepare("SELECT 1 FROM servers WHERE channel_id = ? LIMIT 1")
       .get(message.channelId);
     if (!tracked) return;
 

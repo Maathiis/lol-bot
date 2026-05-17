@@ -80,7 +80,7 @@ async function tickMockTimer(client) {
   // Récupère un channel_id distinct par guild pour ne pas spammer partout
   const channels = db
     .prepare(
-      `SELECT DISTINCT channel_id FROM guild_tracking LIMIT 10`,
+      `SELECT channel_id FROM servers LIMIT 10`,
     )
     .all();
 

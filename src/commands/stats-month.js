@@ -21,7 +21,8 @@ module.exports = {
         SUM(ms.total_time_spent_dead) as total_time_dead
       FROM monthly_stats ms 
       JOIN accounts p ON p.puuid = ms.puuid
-      JOIN guild_tracking s ON p.puuid = s.puuid
+      JOIN server_members sm ON sm.puuid = p.puuid
+      JOIN servers s ON s.id = sm.server_id
       WHERE ms.month = ? AND s.guild_id = ?
       GROUP BY identifier
       ORDER BY total_losses DESC

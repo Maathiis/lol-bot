@@ -11,9 +11,10 @@ module.exports = {
     await interaction.deferReply();
 
     const players = db.prepare(`
-      SELECT DISTINCT p.puuid, p.game_name, p.tag_line, p.discord_user_id, p.loss_streak 
-      FROM accounts p 
-      JOIN guild_tracking s ON p.puuid = s.puuid 
+      SELECT DISTINCT p.puuid, p.game_name, p.tag_line, p.discord_user_id, p.loss_streak
+      FROM accounts p
+      JOIN server_members sm ON sm.puuid = p.puuid
+      JOIN servers s ON s.id = sm.server_id
       WHERE s.guild_id = ?
     `).all(interaction.guildId);
     

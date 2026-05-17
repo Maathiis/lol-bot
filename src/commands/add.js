@@ -35,11 +35,14 @@ module.exports = {
       if (discordUser) {
         db.prepare("UPDATE accounts SET discord_user_id = ? WHERE puuid = ?").run(discordUser.id, puuid);
       }
+      // Upsert du serveur (guild + salon courant)
       db.prepare(`
-        INSERT INTO guild_tracking (puuid, guild_id, channel_id) 
-        VALUES (?, ?, ?) 
-        ON CONFLICT(puuid, guild_id) DO UPDATE SET channel_id = excluded.channel_id
-      `).run(puuid, interaction.guildId, interaction.channelId);
+        INSERT INTO servers (name, guild_id, channel_id, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(guild_id, channel_id) DO UPDATE SET channel_id = excluded.channel_id
+      `).run(`Serveur ${interaction.guildId}`, interaction.guildId, interaction.channelId, Date.now());
+      const server = db.prepare("SELECT id FROM servers WHERE guild_id = ? AND channel_id = ?").get(interaction.guildId, interaction.channelId);
+      db.prepare("INSERT OR IGNORE INTO server_members (server_id, puuid) VALUES (?, ?)").run(server.id, puuid);
 
       const embed = new EmbedBuilder()
         .setTitle("✅ Joueur ajouté")

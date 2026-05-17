@@ -47,7 +47,7 @@ client.once("clientReady", async () => {
 
   // Nettoyage des comptes orphelins (ceux qui ne sont plus suivis sur aucun serveur)
   db.prepare(
-    "DELETE FROM accounts WHERE puuid NOT IN (SELECT DISTINCT puuid FROM guild_tracking)",
+    "DELETE FROM accounts WHERE puuid NOT IN (SELECT DISTINCT puuid FROM server_members)",
   ).run();
 
   // Déploiement des commandes en cache local
@@ -96,7 +96,7 @@ client.on("interactionCreate", async (interaction) => {
     ) {
       const players = db
         .prepare(
-          "SELECT DISTINCT p.game_name, p.tag_line, p.puuid FROM accounts p JOIN guild_tracking s ON p.puuid = s.puuid WHERE (p.game_name LIKE ? OR (p.game_name || '#' || p.tag_line) LIKE ?) AND s.guild_id = ?",
+          "SELECT DISTINCT p.game_name, p.tag_line, p.puuid FROM accounts p JOIN server_members sm ON sm.puuid = p.puuid JOIN servers s ON s.id = sm.server_id WHERE (p.game_name LIKE ? OR (p.game_name || '#' || p.tag_line) LIKE ?) AND s.guild_id = ?",
         )
         .all(`${focusedOption.value}%`, `%${focusedOption.value}%`, interaction.guildId)
         .slice(0, 25);

@@ -37,7 +37,7 @@ async function announceMonthlyStats(client) {
   }
   msg += "━━━━━━━━━━━━━━━━━━━━━━━━";
 
-  const channels = db.prepare("SELECT DISTINCT channel_id FROM guild_tracking").all();
+  const channels = db.prepare("SELECT channel_id FROM servers").all();
   for (const c of channels) {
     const chan = await client.channels.fetch(c.channel_id).catch(() => null);
     if (!chan) continue;

@@ -12,8 +12,11 @@ module.exports = {
     const backupName = `data/database_backup_clear_${Date.now()}.db`;
     fs.copyFileSync("data/database.db", backupName);
 
-    const result = db.prepare("DELETE FROM guild_tracking WHERE guild_id = ?").run(interaction.guildId);
-    db.prepare("DELETE FROM accounts WHERE puuid NOT IN (SELECT DISTINCT puuid FROM guild_tracking)").run();
+    const result = db.prepare(`
+      DELETE FROM server_members
+      WHERE server_id IN (SELECT id FROM servers WHERE guild_id = ?)
+    `).run(interaction.guildId);
+    db.prepare("DELETE FROM accounts WHERE puuid NOT IN (SELECT DISTINCT puuid FROM server_members)").run();
     
     if (result.changes > 0) {
       const embed = new EmbedBuilder()

@@ -13,10 +13,14 @@ module.exports = {
 
     if (!player) return interaction.reply({ content: `❌ Le joueur **${identifiant}** n'est pas dans la base de données.`, ephemeral: true });
 
-    const result = db.prepare("DELETE FROM guild_tracking WHERE guild_id = ? AND puuid = ?").run(interaction.guildId, player.puuid);
+    const result = db.prepare(`
+      DELETE FROM server_members
+      WHERE puuid = ?
+        AND server_id IN (SELECT id FROM servers WHERE guild_id = ?)
+    `).run(player.puuid, interaction.guildId);
     if (result.changes === 0) return interaction.reply({ content: `❌ Le joueur **${player.game_name}#${player.tag_line}** n'est pas suivi sur ce serveur.`, ephemeral: true });
 
-    db.prepare("DELETE FROM accounts WHERE puuid NOT IN (SELECT DISTINCT puuid FROM guild_tracking)").run();
+    db.prepare("DELETE FROM accounts WHERE puuid NOT IN (SELECT DISTINCT puuid FROM server_members)").run();
     
     const embed = new EmbedBuilder()
       .setTitle("🗑️ Joueur retiré")

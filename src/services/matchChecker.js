@@ -26,58 +26,41 @@ function updateLossStats(player, isWin, timeSpentDead = 0) {
   const puuid = player.puuid;
   const monthStr = new Date().toISOString().slice(0, 7);
 
-  // Mise à jour des stats globales (dans tous les cas)
-  db.prepare(`
-    UPDATE accounts 
-    SET total_time_spent_dead = total_time_spent_dead + ?
-    WHERE puuid = ?
-  `).run(timeSpentDead, puuid);
-  
+  // Temps mort (toujours)
+  db.prepare("UPDATE accounts SET total_time_spent_dead = total_time_spent_dead + ? WHERE puuid = ?").run(timeSpentDead, puuid);
+
   if (isWin) {
+    // Victoire : reset loss_streak, incrémente win stats
     if (player.discord_user_id) {
-      // Si lié à Discord, une victoire reset TOUS les comptes de l'utilisateur
       db.prepare("UPDATE accounts SET loss_streak = 0 WHERE discord_user_id = ?").run(player.discord_user_id);
     } else {
-      // Sinon, on reset uniquement ce compte
       db.prepare("UPDATE accounts SET loss_streak = 0 WHERE puuid = ?").run(puuid);
     }
-    db.prepare(
-      `
-      INSERT INTO monthly_stats (puuid, month, losses, games, total_time_spent_dead) 
-      VALUES (?, ?, 0, 1, ?) 
-      ON CONFLICT(puuid, month) DO UPDATE SET 
-        games = games + 1, 
+    db.prepare("UPDATE accounts SET win_streak = win_streak + 1, total_wins = total_wins + 1 WHERE puuid = ?").run(puuid);
+    db.prepare("UPDATE accounts SET max_win_streak = MAX(max_win_streak, win_streak) WHERE puuid = ?").run(puuid);
+
+    db.prepare(`
+      INSERT INTO monthly_stats (puuid, month, wins, losses, games, total_time_spent_dead)
+      VALUES (?, ?, 1, 0, 1, ?)
+      ON CONFLICT(puuid, month) DO UPDATE SET
+        wins  = wins + 1,
+        games = games + 1,
         total_time_spent_dead = total_time_spent_dead + ?
-    `,
-    ).run(puuid, monthStr, timeSpentDead, timeSpentDead);
+    `).run(puuid, monthStr, timeSpentDead, timeSpentDead);
   } else {
-    db.prepare(
-      `
-      UPDATE accounts 
-      SET loss_streak = loss_streak + 1, 
-          total_losses = total_losses + 1 
-      WHERE puuid = ?
-    `,
-    ).run(puuid);
+    // Défaite : reset win_streak, incrémente loss stats
+    db.prepare("UPDATE accounts SET win_streak = 0 WHERE puuid = ?").run(puuid);
+    db.prepare("UPDATE accounts SET loss_streak = loss_streak + 1, total_losses = total_losses + 1 WHERE puuid = ?").run(puuid);
+    db.prepare("UPDATE accounts SET max_loss_streak = MAX(max_loss_streak, loss_streak) WHERE puuid = ?").run(puuid);
 
-    db.prepare(
-      `
-      UPDATE accounts
-      SET max_loss_streak = MAX(max_loss_streak, loss_streak)
-      WHERE puuid = ?
-    `,
-    ).run(puuid);
-
-    db.prepare(
-      `
-      INSERT INTO monthly_stats (puuid, month, losses, games, total_time_spent_dead) 
-      VALUES (?, ?, 1, 1, ?) 
-      ON CONFLICT(puuid, month) DO UPDATE SET 
-        losses = losses + 1, 
-        games = games + 1, 
+    db.prepare(`
+      INSERT INTO monthly_stats (puuid, month, wins, losses, games, total_time_spent_dead)
+      VALUES (?, ?, 0, 1, 1, ?)
+      ON CONFLICT(puuid, month) DO UPDATE SET
+        losses = losses + 1,
+        games  = games + 1,
         total_time_spent_dead = total_time_spent_dead + ?
-    `,
-    ).run(puuid, monthStr, timeSpentDead, timeSpentDead);
+    `).run(puuid, monthStr, timeSpentDead, timeSpentDead);
   }
 
   if (player.discord_user_id) {
@@ -309,7 +292,7 @@ async function _doCheckMatches(client) {
           }
 
           const subs = db
-            .prepare("SELECT channel_id FROM guild_tracking WHERE puuid = ?")
+            .prepare(`SELECT s.channel_id FROM servers s JOIN server_members sm ON sm.server_id = s.id WHERE sm.puuid = ?`)
             .all(player.puuid);
 
           // Récupération des badges cumulés de l'utilisateur Discord (pour éviter le spam s'il a déjà le badge sur un autre compte)
